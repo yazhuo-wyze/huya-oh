@@ -1,16 +1,25 @@
 // ==UserScript==
 // @name         虎牙欧皇时刻自动点击
 // @namespace    https://github.com/yazhuo-wyze/huya-oh
-// @version      1.0.0
+// @version      1.0.1
 // @description  自动参与虎牙直播「欧皇时刻」活动：检测入口、选择免费抽+10、看视频、领取奖励、循环累计幸运值
 // @author       yazhuo-wyze
 // @match        https://www.huya.com/*
+// @match        https://*.huya.com/*
+// @include      https://www.huya.com/*
+// @include      https://*.huya.com/*
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
 
+// ⚠️ 如果看到这行日志，说明脚本已被 Tampermonkey 注入
+console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd700; font-size: 16px; font-weight: bold', 'color: #aaa');
+
 (function () {
     'use strict';
+
+    // 二次确认：脚本入口被执行
+    console.log('%c[虎牙欧皇] 主函数开始执行 %c' + new Date().toLocaleTimeString(), 'color: #0f0', 'color: #aaa');
 
     // ======================== 配置常量 ========================
     const CONFIG = {
