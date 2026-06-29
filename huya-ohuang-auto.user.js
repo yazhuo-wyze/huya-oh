@@ -6,7 +6,7 @@
 // @author       yazhuo-wyze
 // @match        https://www.huya.com/*
 // @grant        none
-// @run-at       document-end
+// @run-at       document-idle
 // ==/UserScript==
 
 (function () {
@@ -142,28 +142,35 @@
     }
 
     /**
-     * 安全点击元素（触发多种事件以确保响应）
+     * 安全点击元素（模拟真实用户点击，适配 React 渲染的元素）
      */
     function safeClick(el) {
         if (!el) return false;
 
-        // 滚动到可见区域
-        el.scrollIntoView({ behavior: 'auto', block: 'center' });
+        const rect = el.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
 
-        // 触发多种事件
-        ['mousedown', 'mouseup', 'click'].forEach(eventType => {
-            const evt = new MouseEvent(eventType, {
-                bubbles: true,
-                cancelable: true,
-                view: window,
-                button: 0,
-            });
-            el.dispatchEvent(evt);
-        });
+        // 模拟完整鼠标事件序列（React 合成事件需要这些原生事件）
+        const events = [
+            new MouseEvent('mouseover', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window }),
+            new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window, button: 0 }),
+            new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window, button: 0 }),
+            new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window, button: 0, detail: 1 }),
+        ];
 
-        // 也尝试原生 click
-        if (typeof el.click === 'function') {
-            el.click();
+        events.forEach(evt => el.dispatchEvent(evt));
+
+        // 尝试原生 click
+        try { el.click(); } catch (e) { /* ignore */ }
+
+        // 如果元素是 div 且没有被点击，尝试点击其父元素或子元素
+        if (el.tagName === 'DIV') {
+            // 尝试触发其内部可点击元素
+            const inner = el.querySelector('i, span, a, button');
+            if (inner) {
+                try { inner.click(); } catch (e) { /* ignore */ }
+            }
         }
 
         return true;
@@ -579,25 +586,53 @@
     // ======================== 入口触发 ========================
 
     /**
-     * 使用 MutationObserver 监听底部导航栏变化
-     * 当欧皇入口出现时触发主循环
+     * 使用 MutationObserver + 定时轮询监听欧皇入口
      */
     function startWatching() {
-        log('👀 开始监听虎牙页面...');
+        const banner = [
+            '╔══════════════════════════════════╗',
+            '║   🎰 虎牙欧皇时刻自动脚本 v1.0  ║',
+            '║   监听中...                     ║',
+            `║   页面: ${location.href.substring(0, 50)}`,
+            '╚══════════════════════════════════╝',
+        ];
+        banner.forEach(line => console.log(line));
 
-        // 回调防抖
+        // 立即检查（不延迟）
+        function checkNow() {
+            if (isRunning || isCompleted) return;
+            const entry = document.querySelector('.player-lucky-burst-icon');
+            if (entry) {
+                const span = entry.querySelector('span');
+                const timer = span ? span.textContent.trim() : '?';
+                log(`🔔 检测到欧皇入口 (倒计时: ${timer})`);
+                mainLoop();
+                return true;
+            }
+            return false;
+        }
+
+        // 立即首次检查
+        checkNow();
+
+        // 1秒、2秒、3秒、5秒各检查一次（覆盖异步加载窗口）
+        [1000, 2000, 3000, 5000].forEach(delay => {
+            setTimeout(() => {
+                if (!isRunning && !isCompleted) {
+                    const found = checkNow();
+                    if (!found && delay === 5000) {
+                        log('👀 暂未检测到欧皇入口，持续监听中...');
+                    }
+                }
+            }, delay);
+        });
+
+        // 回调防抖（减少到 500ms，更快响应）
         let debounceTimer = null;
         function onDomChange() {
             if (isRunning || isCompleted) return;
-
             clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {
-                const entry = document.querySelector('.player-lucky-burst-icon');
-                if (entry) {
-                    log('🔔 DOM 变化检测到欧皇入口');
-                    mainLoop();
-                }
-            }, 1000);
+            debounceTimer = setTimeout(checkNow, 500);
         }
 
         // MutationObserver
@@ -608,35 +643,26 @@
             characterData: true,
         });
 
-        // Fallback: 定时轮询（直接检测 .player-lucky-burst-icon）
+        // 定时轮询（每 2 秒一次，更频繁）
+        setInterval(checkNow, 2000);
+
+        // 心跳日志：每 30 秒输出一次，证明脚本仍在运行
         setInterval(() => {
             if (!isRunning && !isCompleted) {
                 const entry = document.querySelector('.player-lucky-burst-icon');
-                if (entry) {
-                    log('🔔 定时轮询检测到欧皇入口');
-                    mainLoop();
-                }
+                const status = entry ? `检测到入口 (倒计时: ${(entry.querySelector('span')||{}).textContent||'?'})` : '等待活动开始';
+                log(`💓 心跳: ${status} | 已运行 ${Math.floor((Date.now() - startTime) / 1000)}s`);
             }
-        }, CONFIG.NAV_CHECK_INTERVAL_MS);
-
-        // 初始检查
-        setTimeout(() => {
-            const entry = document.querySelector('.player-lucky-burst-icon');
-            if (entry) {
-                log('🔔 初始检测到欧皇入口');
-                mainLoop();
-            } else {
-                log('👀 未检测到欧皇入口，持续监听中...');
-            }
-        }, 2000);
+        }, 30000);
     }
+
+    /** 脚本启动时间 */
+    const startTime = Date.now();
 
     // ======================== 启动 ========================
-    // 等待页面加载完成后启动
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', startWatching);
-    } else {
+    // 虎牙是 SPA，即使 DOM 已加载完也可能还需要等异步组件
+    if (document.readyState === 'complete' || document.readyState === 'interactive') {
         startWatching();
+    } else {
+        window.addEventListener('load', startWatching);
     }
-
-})();
