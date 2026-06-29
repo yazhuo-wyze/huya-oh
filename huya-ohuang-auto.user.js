@@ -100,6 +100,8 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
      * 支持跨层查找，只要 textContent 包含目标文本即可
      */
     function findElementContainingText(text, root = document) {
+        console.log(`${TAG} findElementContainingText: 查找 "${text}"`);
+
         const walker = document.createTreeWalker(
             root,
             NodeFilter.SHOW_ELEMENT,
@@ -108,8 +110,8 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
                     // 跳过不可见和超大容器
                     if (node.offsetHeight === 0 && node.offsetWidth === 0) return NodeFilter.FILTER_SKIP;
                     if (node.tagName === 'HTML' || node.tagName === 'BODY') return NodeFilter.FILTER_SKIP;
-                    // 只检查叶子节点或小容器
-                    if (node.children.length > 10) return NodeFilter.FILTER_SKIP;
+                    // 放宽子元素数量限制，避免漏掉复杂结构的按钮
+                    if (node.children.length > 50) return NodeFilter.FILTER_SKIP;
                     return NodeFilter.FILTER_ACCEPT;
                 }
             }
@@ -127,9 +129,11 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
                         break;
                     }
                 }
+                console.log(`${TAG} findElementContainingText: 找到匹配元素 ${target.tagName}, text="${txt.substring(0, 50)}"`);
                 return target;
             }
         }
+        console.log(`${TAG} findElementContainingText: 未找到匹配 "${text}"`);
         return null;
     }
 
@@ -154,11 +158,35 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
      * 安全点击元素（模拟真实用户点击，适配 React 渲染的元素）
      */
     function safeClick(el) {
-        if (!el) return false;
+        if (!el) {
+            console.error(`${TAG} safeClick: 元素为空`);
+            return false;
+        }
+
+        console.log(`${TAG} safeClick: 尝试点击元素 tag=${el.tagName}, text="${(el.textContent || '').substring(0, 30)}"`);
 
         const rect = el.getBoundingClientRect();
+        console.log(`${TAG} safeClick: 元素位置 rect={left:${rect.left}, top:${rect.top}, width:${rect.width}, height:${rect.height}}`);
+
+        // 检查元素是否可见
+        if (rect.width === 0 || rect.height === 0) {
+            console.warn(`${TAG} safeClick: 元素尺寸为0，尝试查找内部可点击子元素`);
+            const innerClickable = el.querySelector('button, a, [role="button"], i, span');
+            if (innerClickable) {
+                return safeClick(innerClickable);
+            }
+            return false;
+        }
+
         const cx = rect.left + rect.width / 2;
         const cy = rect.top + rect.height / 2;
+
+        // 确保元素在视口内
+        if (cx < 0 || cy < 0 || cx > window.innerWidth || cy > window.innerHeight) {
+            console.warn(`${TAG} safeClick: 元素不在视口内，尝试滚动到可见区域`);
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            sleep(300); // 等待滚动完成
+        }
 
         // 模拟完整鼠标事件序列（React 合成事件需要这些原生事件）
         const events = [
@@ -168,10 +196,20 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
             new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window, button: 0, detail: 1 }),
         ];
 
-        events.forEach(evt => el.dispatchEvent(evt));
+        events.forEach(evt => {
+            try {
+                el.dispatchEvent(evt);
+            } catch (e) {
+                console.warn(`${TAG} safeClick: 派发事件失败 ${evt.type}:`, e.message);
+            }
+        });
 
         // 尝试原生 click
-        try { el.click(); } catch (e) { /* ignore */ }
+        try {
+            el.click();
+        } catch (e) {
+            console.warn(`${TAG} safeClick: 原生 click 失败:`, e.message);
+        }
 
         // 如果元素是 div 且没有被点击，尝试点击其父元素或子元素
         if (el.tagName === 'DIV') {
@@ -182,6 +220,7 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
             }
         }
 
+        console.log(`${TAG} safeClick: 点击完成`);
         return true;
     }
 
@@ -212,10 +251,14 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
         // 尝试多种可能的显示位置
         const candidates = [];
 
-        // 方案1: 查找包含"幸运值"的元素
+        // 方案1: 查找包含"幸运值"的元素（使用更高效的查询）
         const luckyLabelElements = [];
-        const allElements = document.querySelectorAll('*');
-        for (const el of allElements) {
+        // 只搜索特定类名的元素，而不是全部 *
+        const possibleElements = document.querySelectorAll('[class*="lucky"], [class*="luck"], [class*="ohuang"], [class*="oh"]');
+        
+        // 也搜索文本节点中包含"幸运"的元素
+        const allDivs = document.querySelectorAll('div, span, p');
+        for (const el of allDivs) {
             const text = (el.textContent || '').trim();
             if (text.includes('幸运值') || text.includes('幸运')) {
                 luckyLabelElements.push(el);
@@ -236,8 +279,7 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
 
         // 方案2: 查找纯数字显示（可能是大号字体显示幸运值）
         if (candidates.length === 0) {
-            const largeTextElements = document.querySelectorAll('span, div, p');
-            for (const el of largeTextElements) {
+            for (const el of allDivs) {
                 const text = (el.textContent || '').trim();
                 if (/^\d{1,3}$/.test(text)) {
                     const val = parseInt(text, 10);
@@ -257,27 +299,37 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
 
     /**
      * 检测欧皇时刻入口按钮
-     * HTML 结构: <div class="player-left-icon-enter player-lucky-burst-icon"><i></i><span>1:37:19</span></div>
-     * 位于播放器左侧，CSS class 为 player-lucky-burst-icon
+     * 支持多种可能的 CSS 选择器
      */
     function detectOhuangEntry() {
-        // 精确 CSS 选择器定位
-        const entryBtn = document.querySelector('.player-lucky-burst-icon');
-        if (!entryBtn) return null;
+        // 候选选择器列表（按优先级排序）
+        const selectors = [
+            '.player-lucky-burst-icon',    // 原始选择器
+            '[class*="lucky-burst"]',       // 模糊匹配
+            '[class*="ohuang"]',            // 欧皇相关
+            '[class*="burst"]',             // burst 相关
+        ];
 
-        // 验证：检查是否包含倒计时 span（格式 HH:MM:SS）
-        const countdownSpan = entryBtn.querySelector('span');
-        if (countdownSpan) {
-            const text = (countdownSpan.textContent || '').trim();
-            if (/\d{1,2}:\d{2}:\d{2}/.test(text)) {
+        for (const selector of selectors) {
+            const entryBtn = document.querySelector(selector);
+            if (!entryBtn) continue;
+
+            // 验证：检查是否包含倒计时 span（格式 HH:MM:SS）
+            const countdownSpan = entryBtn.querySelector('span');
+            if (countdownSpan) {
+                const text = (countdownSpan.textContent || '').trim();
+                if (/\d{1,2}:\d{2}:\d{2}/.test(text)) {
+                    console.log(`${TAG} detectOhuangEntry: 通过选择器 "${selector}" 找到入口`);
+                    return entryBtn;
+                }
+            }
+
+            // 备选：检查自身文本
+            const selfText = (entryBtn.textContent || '').trim();
+            if (/\d{1,2}:\d{2}:\d{2}/.test(selfText)) {
+                console.log(`${TAG} detectOhuangEntry: 通过选择器 "${selector}" 找到入口（自身文本匹配）`);
                 return entryBtn;
             }
-        }
-
-        // 备选：检查自身文本
-        const selfText = (entryBtn.textContent || '').trim();
-        if (/\d{1,2}:\d{2}:\d{2}/.test(selfText)) {
-            return entryBtn;
         }
 
         return null;
@@ -296,8 +348,11 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
             /剩余\s*(\d+)\s*秒/,       // "剩余13秒"
         ];
 
-        const allElements = document.querySelectorAll('*');
-        for (const el of allElements) {
+        // 只搜索弹窗/模态框内的元素，而不是全部 *
+        const modalElements = document.querySelectorAll('.modal, .popup, .dialog, [class*="modal"], [class*="popup"], [class*="dialog"], [class*="overlay"], [class*="mask"]');
+        const elementsToCheck = modalElements.length > 0 ? modalElements : document.querySelectorAll('*');
+        
+        for (const el of elementsToCheck) {
             const text = (el.textContent || '').trim();
             for (const pattern of patterns) {
                 const match = text.match(pattern);
@@ -518,20 +573,26 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
 
     /**
      * 点击欧皇入口进入活动
-     * 使用 CSS 选择器 .player-lucky-burst-icon 定位
+     * 使用多种 CSS 选择器定位
      */
     async function enterActivity() {
-        const entry = document.querySelector('.player-lucky-burst-icon');
-        if (!entry) return false;
+        const entry = detectOhuangEntry();
+        if (!entry) {
+            console.warn(`${TAG} enterActivity: 未检测到欧皇入口`);
+            return false;
+        }
 
         // 确保入口可见且可点击
         const rect = entry.getBoundingClientRect();
-        if (rect.width === 0 || rect.height === 0) return false;
+        if (rect.width === 0 || rect.height === 0) {
+            console.warn(`${TAG} enterActivity: 入口元素尺寸为0`);
+            return false;
+        }
 
-        log('✅ 检测到欧皇时刻活动入口！');
+        console.log(`${TAG} enterActivity: 检测到欧皇时刻活动入口！`);
         await humanDelay(CONFIG.CLICK_DELAY_MIN_MS, CONFIG.CLICK_DELAY_MAX_MS);
         safeClick(entry);
-        log('👆 点击欧皇入口，进入活动...');
+        console.log(`${TAG} enterActivity: 点击欧皇入口，进入活动...`);
         await sleep(3000); // 等待活动界面加载
 
         return true;
@@ -580,7 +641,7 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
                     }
                 }
             } catch (e) {
-                error(`循环异常: ${e.message}`);
+                error(`循环异常: ${e.message}\n${e.stack}`);
                 await sleep(CONFIG.RETRY_INTERVAL_MS);
             }
         }
@@ -610,7 +671,9 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
         // 立即检查（不延迟）
         function checkNow() {
             if (isRunning || isCompleted) return;
-            const entry = document.querySelector('.player-lucky-burst-icon');
+            
+            // 使用改进的入口检测
+            const entry = detectOhuangEntry();
             if (entry) {
                 const span = entry.querySelector('span');
                 const timer = span ? span.textContent.trim() : '?';
@@ -618,6 +681,16 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
                 mainLoop();
                 return true;
             }
+            
+            // 调试：输出当前页面中可能的 player 相关元素
+            const playerElements = document.querySelectorAll('[class*="player"]');
+            if (playerElements.length > 0 && Math.random() < 0.1) { // 10% 概率输出，避免日志过多
+                log(`🔍 页面中有 ${playerElements.length} 个 player 相关元素`);
+                for (let i = 0; i < Math.min(3, playerElements.length); i++) {
+                    log(`   [${i}] class="${playerElements[i].className}"`);
+                }
+            }
+            
             return false;
         }
 
@@ -631,6 +704,11 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
                     const found = checkNow();
                     if (!found && delay === 5000) {
                         log('👀 暂未检测到欧皇入口，持续监听中...');
+                        // 输出页面结构信息以便调试
+                        const anyPlayer = document.querySelector('[class*="player"]');
+                        if (anyPlayer) {
+                            log(`🔍 页面中有 player 相关元素: ${anyPlayer.className.substring(0, 100)}`);
+                        }
                     }
                 }
             }, delay);
@@ -658,7 +736,7 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
         // 心跳日志：每 30 秒输出一次，证明脚本仍在运行
         setInterval(() => {
             if (!isRunning && !isCompleted) {
-                const entry = document.querySelector('.player-lucky-burst-icon');
+                const entry = detectOhuangEntry();
                 const status = entry ? `检测到入口 (倒计时: ${(entry.querySelector('span')||{}).textContent||'?'})` : '等待活动开始';
                 log(`💓 心跳: ${status} | 已运行 ${Math.floor((Date.now() - startTime) / 1000)}s`);
             }
@@ -675,3 +753,4 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.0.1', 'color: #ffd70
     } else {
         window.addEventListener('load', startWatching);
     }
+})();
