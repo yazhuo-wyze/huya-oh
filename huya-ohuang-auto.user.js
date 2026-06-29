@@ -435,6 +435,7 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.1.0', 'color: #ffd70
             closeRootByText(superDoc);
         }
 
+        // 无论是否有 iframe，都关闭当前页面的弹窗
         closeRootByText(document);
         await sleep(CONFIG.POPUP_CLOSE_DELAY_MS);
     }
@@ -628,13 +629,16 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.1.0', 'color: #ffd70
 
         const superDoc = getSuperLuckyFrameDoc();
         if (!superDoc) {
-            return false;
+            // 弹窗可能直接渲染在当前页面而非 iframe 中，降级使用 document
+            log('⚠️ 未检测到 super_lucky_time iframe，使用当前 document 作为操作目标');
         }
 
         cycleCount++;
         log(`🔄 第 ${cycleCount} 轮开始`);
 
-        const luckyOnPage = parseLuckyValue(superDoc);
+        const targetDoc = superDoc || document;
+
+        const luckyOnPage = parseLuckyValue(targetDoc);
         if (luckyOnPage !== null) {
             syncLuckyState(luckyOnPage);
         } else if (currentLuckyValue === 0) {
@@ -650,11 +654,11 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.1.0', 'color: #ffd70
             return true;
         }
 
-        if (!(await waitForRewardPopup(superDoc))) {
+        if (!(await waitForRewardPopup(targetDoc))) {
             return false;
         }
 
-        const freeOption = findElementContainingText('限时免费', superDoc) || findElementContainingText('免费抽', superDoc);
+        const freeOption = findElementContainingText('限时免费', targetDoc) || findElementContainingText('免费抽', targetDoc);
         if (freeOption) {
             await humanDelay(CONFIG.CLICK_DELAY_MIN_MS, CONFIG.CLICK_DELAY_MAX_MS);
             safeClick(freeOption);
@@ -662,7 +666,7 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.1.0', 'color: #ffd70
             await sleep(400);
         }
 
-        const participateBtn = findElementContainingText('看视频免费参与', superDoc);
+        const participateBtn = findElementContainingText('看视频免费参与', targetDoc);
         if (!participateBtn) {
             warn('未找到「看视频免费参与」按钮，等待下一次轮询');
             return false;
@@ -688,11 +692,11 @@ console.log('%c[虎牙欧皇] 脚本已注入！%c 版本 1.1.0', 'color: #ffd70
             warn('未找到「恭喜完成任务」按钮');
         }
 
-        const rewardGain = parseRewardLuckyGain(superDoc) ?? parseRewardLuckyGain(taskDoc) ?? 10;
+        const rewardGain = parseRewardLuckyGain(targetDoc) ?? parseRewardLuckyGain(taskDoc) ?? 10;
         await closeActivityPopups();
         await sleep(CONFIG.CYCLE_COOLDOWN_MS);
 
-        const refreshedLucky = parseLuckyValue(superDoc);
+        const refreshedLucky = parseLuckyValue(targetDoc);
         if (refreshedLucky !== null) {
             syncLuckyState(refreshedLucky);
         } else {
