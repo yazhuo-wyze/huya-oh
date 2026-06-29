@@ -240,52 +240,28 @@
     }
 
     /**
-     * 检测底部导航栏第一个位置是否为欧皇时刻入口
-     * 条件：文字为"欧皇"且存在倒计时
+     * 检测欧皇时刻入口按钮
+     * HTML 结构: <div class="player-left-icon-enter player-lucky-burst-icon"><i></i><span>1:37:19</span></div>
+     * 位于播放器左侧，CSS class 为 player-lucky-burst-icon
      */
     function detectOhuangEntry() {
-        // 在底部导航栏中查找
-        // 虎牙通常使用 footer 或特定的 nav 容器
-        const possibleNavContainers = [
-            ...document.querySelectorAll('footer'),
-            ...document.querySelectorAll('[class*="footer"]'),
-            ...document.querySelectorAll('[class*="nav"]'),
-            ...document.querySelectorAll('[class*="bottom"]'),
-            ...document.querySelectorAll('[class*="tab"]'),
-            ...document.querySelectorAll('[class*="entrance"]'),
-        ];
+        // 精确 CSS 选择器定位
+        const entryBtn = document.querySelector('.player-lucky-burst-icon');
+        if (!entryBtn) return null;
 
-        for (const container of possibleNavContainers) {
-            const navItems = container.querySelectorAll('li, a, div, span');
-            for (const item of navItems) {
-                const text = (item.textContent || '').trim();
-                // 检测条件：包含"欧皇"且有倒计时格式
-                if (text.includes('欧皇') && /\d{1,2}:\d{2}:\d{2}/.test(text)) {
-                    return item;
-                }
-                // 备选："欧皇"单独出现
-                if (text === '欧皇') {
-                    // 检查是否有倒计时在附近
-                    const nextSibling = item.nextElementSibling;
-                    const parentText = item.parentElement?.textContent || '';
-                    if (/\d{1,2}:\d{2}:\d{2}/.test(parentText)) {
-                        return item;
-                    }
-                }
+        // 验证：检查是否包含倒计时 span（格式 HH:MM:SS）
+        const countdownSpan = entryBtn.querySelector('span');
+        if (countdownSpan) {
+            const text = (countdownSpan.textContent || '').trim();
+            if (/\d{1,2}:\d{2}:\d{2}/.test(text)) {
+                return entryBtn;
             }
         }
 
-        // 更宽泛的查找：任何包含"欧皇"和倒计时的元素
-        const allTextNodes = document.querySelectorAll('*');
-        for (const el of allTextNodes) {
-            const text = (el.textContent || '').trim();
-            if (text.includes('欧皇') && /\d{1,2}:\d{2}:\d{2}/.test(text)) {
-                // 确保是导航栏相关（靠近底部）
-                const rect = el.getBoundingClientRect();
-                if (rect.bottom > window.innerHeight * 0.7) {
-                    return el;
-                }
-            }
+        // 备选：检查自身文本
+        const selfText = (entryBtn.textContent || '').trim();
+        if (/\d{1,2}:\d{2}:\d{2}/.test(selfText)) {
+            return entryBtn;
         }
 
         return null;
@@ -525,10 +501,11 @@
     }
 
     /**
-     * 尝试点击欧皇入口进入活动
+     * 点击欧皇入口进入活动
+     * 使用 CSS 选择器 .player-lucky-burst-icon 定位
      */
     async function enterActivity() {
-        const entry = detectOhuangEntry();
+        const entry = document.querySelector('.player-lucky-burst-icon');
         if (!entry) return false;
 
         // 确保入口可见且可点击
@@ -614,11 +591,10 @@
             if (isRunning || isCompleted) return;
 
             clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(async () => {
-                const entry = detectOhuangEntry();
-                const watchBtn = findElementContainingText('看视频免费参与');
-
-                if (entry || watchBtn) {
+            debounceTimer = setTimeout(() => {
+                const entry = document.querySelector('.player-lucky-burst-icon');
+                if (entry) {
+                    log('🔔 DOM 变化检测到欧皇入口');
                     mainLoop();
                 }
             }, 1000);
@@ -632,12 +608,12 @@
             characterData: true,
         });
 
-        // Fallback: 定时轮询
+        // Fallback: 定时轮询（直接检测 .player-lucky-burst-icon）
         setInterval(() => {
             if (!isRunning && !isCompleted) {
-                const entry = detectOhuangEntry();
-                const watchBtn = findElementContainingText('看视频免费参与');
-                if (entry || watchBtn) {
+                const entry = document.querySelector('.player-lucky-burst-icon');
+                if (entry) {
+                    log('🔔 定时轮询检测到欧皇入口');
                     mainLoop();
                 }
             }
@@ -645,10 +621,12 @@
 
         // 初始检查
         setTimeout(() => {
-            const entry = detectOhuangEntry();
-            const watchBtn = findElementContainingText('看视频免费参与');
-            if (entry || watchBtn) {
+            const entry = document.querySelector('.player-lucky-burst-icon');
+            if (entry) {
+                log('🔔 初始检测到欧皇入口');
                 mainLoop();
+            } else {
+                log('👀 未检测到欧皇入口，持续监听中...');
             }
         }, 2000);
     }
