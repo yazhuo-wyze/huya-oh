@@ -1,0 +1,2 @@
+[console_scripts]
+huya-open-room = huya_automation.main:main

@@ -1,0 +1,1 @@
+"""Huya live room automation."""
