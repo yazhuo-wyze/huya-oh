@@ -18,6 +18,7 @@ from .edge import (
 )
 from .room import (
     RoomError,
+    ensure_player_danmu_disabled,
     ensure_room_muted,
     ensure_theater_mode,
     find_or_open_room,
@@ -61,6 +62,10 @@ async def run(args: argparse.Namespace) -> int:
             dry_run=args.dry_run,
         )
         muted = await ensure_room_muted(page, dry_run=args.dry_run)
+        danmu_disabled = await ensure_player_danmu_disabled(
+            page,
+            dry_run=args.dry_run,
+        )
         changed = await ensure_theater_mode(page, dry_run=args.dry_run)
 
         print(f"{'复用' if reused else '新建'}直播间标签页：{page.url}")
@@ -76,6 +81,12 @@ async def run(args: argparse.Namespace) -> int:
             print("已静音直播间。")
         else:
             print("当前直播间已经静音。")
+        if args.dry_run and danmu_disabled:
+            print("dry-run：播放器弹幕已开启，正式运行时将自动关闭。")
+        elif danmu_disabled:
+            print("已关闭播放器弹幕。")
+        else:
+            print("播放器弹幕已经关闭。")
         if args.dry_run and changed:
             print("dry-run：当前不是剧场模式，正式运行时将自动进入。")
         elif changed:

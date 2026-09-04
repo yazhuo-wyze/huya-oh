@@ -12,6 +12,8 @@ THEATER_BUTTON_SELECTOR = "#player-fullpage-btn"
 THEATER_BODY_CLASS = "mode-page-theater"
 SOUND_BUTTON_SELECTOR = "#player-sound-btn"
 SOUND_OFF_CLASS = "player-sound-off"
+DANMU_BUTTON_SELECTOR = "#player-danmu-btn"
+DANMU_OFF_CLASS = "player-ctrl-switch-hide"
 
 
 class RoomError(RuntimeError):
@@ -136,4 +138,47 @@ async def ensure_room_muted(page: Page, *, dry_run: bool = False) -> bool:
         )
     except PlaywrightTimeoutError as error:
         raise RoomError("已点击音量控件，但直播间仍然有声音。") from error
+    return True
+
+
+async def is_player_danmu_disabled(page: Page) -> bool:
+    button = page.locator(DANMU_BUTTON_SELECTOR)
+    button_classes = await button.get_attribute("class") or ""
+    if DANMU_OFF_CLASS in button_classes.split():
+        return True
+    return await button.get_attribute("title") == "开启弹幕"
+
+
+async def ensure_player_danmu_disabled(
+    page: Page,
+    *,
+    dry_run: bool = False,
+) -> bool:
+    await wait_for_room(page)
+    button = page.locator(DANMU_BUTTON_SELECTOR)
+    try:
+        await button.wait_for(state="attached", timeout=10_000)
+    except PlaywrightTimeoutError as error:
+        raise RoomError(
+            "直播间已打开，但未找到播放器弹幕开关。页面结构可能已变化。"
+        ) from error
+
+    if await is_player_danmu_disabled(page):
+        return False
+    if dry_run:
+        return True
+
+    await button.evaluate("(element) => element.click()")
+    try:
+        await page.wait_for_function(
+            """([selector, offClass]) => {
+                const button = document.querySelector(selector);
+                return button?.classList.contains(offClass)
+                    || button?.title === '开启弹幕';
+            }""",
+            arg=[DANMU_BUTTON_SELECTOR, DANMU_OFF_CLASS],
+            timeout=5_000,
+        )
+    except PlaywrightTimeoutError as error:
+        raise RoomError("已点击弹幕开关，但播放器弹幕仍然开启。") from error
     return True

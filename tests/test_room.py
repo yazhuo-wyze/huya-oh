@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from huya_automation.room import (
     TARGET_ROOM_URL,
+    ensure_player_danmu_disabled,
     ensure_room_muted,
     ensure_theater_mode,
     is_target_room,
@@ -89,6 +90,48 @@ class RoomMuteTest(unittest.IsolatedAsyncioTestCase):
         page, button = self.build_page("player-sound-on", False)
 
         changed = await ensure_room_muted(page, dry_run=True)
+
+        self.assertTrue(changed)
+        button.evaluate.assert_not_awaited()
+
+
+class PlayerDanmuTest(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def build_page(button_class: str, title: str) -> tuple:
+        danmu_button = MagicMock()
+        danmu_button.wait_for = AsyncMock()
+        danmu_button.get_attribute = AsyncMock(
+            side_effect=lambda name: button_class if name == "class" else title
+        )
+        danmu_button.evaluate = AsyncMock()
+        theater_button = MagicMock()
+        theater_button.wait_for = AsyncMock()
+        page = MagicMock()
+        page.locator.side_effect = lambda selector: (
+            danmu_button
+            if selector == "#player-danmu-btn"
+            else theater_button
+        )
+        return page, danmu_button
+
+    async def test_already_disabled_does_not_click(self) -> None:
+        page, button = self.build_page(
+            "player-ctrl-switch player-ctrl-switch-hide",
+            "开启弹幕",
+        )
+
+        changed = await ensure_player_danmu_disabled(page)
+
+        self.assertFalse(changed)
+        button.evaluate.assert_not_awaited()
+
+    async def test_dry_run_does_not_click_enabled_danmu(self) -> None:
+        page, button = self.build_page(
+            "player-ctrl-switch player-ctrl-switch-show",
+            "关闭弹幕",
+        )
+
+        changed = await ensure_player_danmu_disabled(page, dry_run=True)
 
         self.assertTrue(changed)
         button.evaluate.assert_not_awaited()
