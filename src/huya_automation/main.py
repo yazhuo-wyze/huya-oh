@@ -16,6 +16,7 @@ from .edge import (
     connect_edge,
     ensure_debug_edge,
 )
+from .lucky_event import LuckyEventError, monitor_lucky_event
 from .room import (
     RoomError,
     ensure_player_danmu_disabled,
@@ -33,6 +34,11 @@ def parse_args() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="检查并报告操作，但不切换剧场模式。",
+    )
+    parser.add_argument(
+        "--no-monitor",
+        action="store_true",
+        help="完成直播间初始化后退出，不持续检测欧皇时刻活动。",
     )
     parser.add_argument(
         "--debug-port",
@@ -93,7 +99,11 @@ async def run(args: argparse.Namespace) -> int:
             print("已进入剧场模式。")
         else:
             print("当前已经是剧场模式。")
-        print("浏览器将保持打开。")
+        if args.no_monitor:
+            print("浏览器将保持打开。")
+        else:
+            print("开始每 15 秒检测欧皇时刻活动，按 Ctrl+C 停止。")
+            await monitor_lucky_event(page, dry_run=args.dry_run)
     return 0
 
 
@@ -102,7 +112,7 @@ def main() -> None:
     args = parse_args()
     try:
         raise SystemExit(asyncio.run(run(args)))
-    except (EdgeError, LoginError, RoomError) as error:
+    except (EdgeError, LoginError, LuckyEventError, RoomError) as error:
         print(f"错误：{error}", file=sys.stderr)
         raise SystemExit(2) from error
     except KeyboardInterrupt:
