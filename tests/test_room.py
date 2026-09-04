@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from huya_automation.room import (
     TARGET_ROOM_URL,
+    ensure_room_muted,
     ensure_theater_mode,
     is_target_room,
 )
@@ -49,6 +50,47 @@ class TheaterModeTest(unittest.IsolatedAsyncioTestCase):
         changed = await ensure_theater_mode(page)
 
         self.assertFalse(changed)
+        button.evaluate.assert_not_awaited()
+
+
+class RoomMuteTest(unittest.IsolatedAsyncioTestCase):
+    @staticmethod
+    def build_page(button_class: str, media_muted: bool) -> tuple:
+        sound_button = MagicMock()
+        sound_button.wait_for = AsyncMock()
+        sound_button.get_attribute = AsyncMock(return_value=button_class)
+        sound_button.evaluate = AsyncMock()
+        theater_button = MagicMock()
+        theater_button.wait_for = AsyncMock()
+        media = MagicMock()
+        media.count = AsyncMock(return_value=1)
+        media.evaluate_all = AsyncMock(return_value=media_muted)
+        page = MagicMock()
+
+        def locator(selector: str) -> MagicMock:
+            if selector == "#player-sound-btn":
+                return sound_button
+            if selector == "video, audio":
+                return media
+            return theater_button
+
+        page.locator.side_effect = locator
+        return page, sound_button
+
+    async def test_already_muted_does_not_click(self) -> None:
+        page, button = self.build_page("player-sound-off", True)
+
+        changed = await ensure_room_muted(page)
+
+        self.assertFalse(changed)
+        button.evaluate.assert_not_awaited()
+
+    async def test_dry_run_does_not_click_audible_room(self) -> None:
+        page, button = self.build_page("player-sound-on", False)
+
+        changed = await ensure_room_muted(page, dry_run=True)
+
+        self.assertTrue(changed)
         button.evaluate.assert_not_awaited()
 
 

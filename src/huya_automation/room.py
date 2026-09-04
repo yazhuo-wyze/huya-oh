@@ -10,6 +10,8 @@ from playwright.async_api import Browser, Page, TimeoutError as PlaywrightTimeou
 TARGET_ROOM_URL = "https://www.huya.com/660002"
 THEATER_BUTTON_SELECTOR = "#player-fullpage-btn"
 THEATER_BODY_CLASS = "mode-page-theater"
+SOUND_BUTTON_SELECTOR = "#player-sound-btn"
+SOUND_OFF_CLASS = "player-sound-off"
 
 
 class RoomError(RuntimeError):
@@ -86,4 +88,52 @@ async def ensure_theater_mode(page: Page, *, dry_run: bool = False) -> bool:
         )
     except PlaywrightTimeoutError as error:
         raise RoomError("已点击剧场模式控件，但页面未进入剧场模式。") from error
+    return True
+
+
+async def is_room_muted(page: Page) -> bool:
+    button_classes = (
+        await page.locator(SOUND_BUTTON_SELECTOR).get_attribute("class") or ""
+    )
+    if SOUND_OFF_CLASS in button_classes.split():
+        return True
+
+    media = page.locator("video, audio")
+    if await media.count() == 0:
+        return False
+    return await media.evaluate_all(
+        "(elements) => elements.every((item) => item.muted || item.volume === 0)"
+    )
+
+
+async def ensure_room_muted(page: Page, *, dry_run: bool = False) -> bool:
+    await wait_for_room(page)
+    button = page.locator(SOUND_BUTTON_SELECTOR)
+    try:
+        await button.wait_for(state="attached", timeout=10_000)
+    except PlaywrightTimeoutError as error:
+        raise RoomError(
+            "直播间已打开，但未找到音量控件。页面结构可能已变化。"
+        ) from error
+
+    if await is_room_muted(page):
+        return False
+    if dry_run:
+        return True
+
+    await button.evaluate("(element) => element.click()")
+    try:
+        await page.wait_for_function(
+            """([selector, offClass]) => {
+                const button = document.querySelector(selector);
+                const media = [...document.querySelectorAll('video, audio')];
+                return button?.classList.contains(offClass)
+                    || (media.length > 0
+                        && media.every((item) => item.muted || item.volume === 0));
+            }""",
+            arg=[SOUND_BUTTON_SELECTOR, SOUND_OFF_CLASS],
+            timeout=5_000,
+        )
+    except PlaywrightTimeoutError as error:
+        raise RoomError("已点击音量控件，但直播间仍然有声音。") from error
     return True

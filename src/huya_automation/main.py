@@ -16,7 +16,12 @@ from .edge import (
     connect_edge,
     ensure_debug_edge,
 )
-from .room import RoomError, ensure_theater_mode, find_or_open_room
+from .room import (
+    RoomError,
+    ensure_room_muted,
+    ensure_theater_mode,
+    find_or_open_room,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,6 +60,7 @@ async def run(args: argparse.Namespace) -> int:
             credentials,
             dry_run=args.dry_run,
         )
+        muted = await ensure_room_muted(page, dry_run=args.dry_run)
         changed = await ensure_theater_mode(page, dry_run=args.dry_run)
 
         print(f"{'复用' if reused else '新建'}直播间标签页：{page.url}")
@@ -64,6 +70,12 @@ async def run(args: argparse.Namespace) -> int:
             print("账号密码登录成功。")
         else:
             print("当前已经登录。")
+        if args.dry_run and muted:
+            print("dry-run：当前直播间有声音，正式运行时将自动静音。")
+        elif muted:
+            print("已静音直播间。")
+        else:
+            print("当前直播间已经静音。")
         if args.dry_run and changed:
             print("dry-run：当前不是剧场模式，正式运行时将自动进入。")
         elif changed:
