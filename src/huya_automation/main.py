@@ -17,6 +17,7 @@ from .edge import (
     ensure_debug_edge,
 )
 from .lucky_event import LuckyEventError, monitor_lucky_event
+from .instance_lock import InstanceLockError, acquire_instance_lock
 from .logging_config import configure_logging
 from .room import (
     RoomError,
@@ -121,14 +122,25 @@ def main() -> None:
     configure_logging()
     load_dotenv()
     args = parse_args()
+    lock_file = None
     try:
+        lock_file = acquire_instance_lock()
         raise SystemExit(asyncio.run(run(args)))
-    except (EdgeError, LoginError, LuckyEventError, RoomError) as error:
+    except (
+        EdgeError,
+        InstanceLockError,
+        LoginError,
+        LuckyEventError,
+        RoomError,
+    ) as error:
         logger.error("%s", error)
         raise SystemExit(2) from error
     except KeyboardInterrupt:
         logger.info("用户已停止程序")
         raise SystemExit(130)
+    finally:
+        if lock_file is not None:
+            lock_file.close()
 
 
 if __name__ == "__main__":

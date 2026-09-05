@@ -3,6 +3,7 @@ import unittest
 from huya_automation.lucky_event import (
     ACTIVITY_FRAME_PATH,
     AD_COMPLETE_SELECTOR,
+    AD_FRAME_PATH,
     BASE_COIN_BUTTON_SELECTOR,
     BONUS_COIN_BUTTON_SELECTOR,
     COIN_CONFIRM_BUTTON_SELECTOR,
@@ -67,6 +68,7 @@ class LuckyEventSelectorTest(unittest.TestCase):
         self.assertEqual(FREE_DRAW_CARD_SELECTOR, ".list-item")
         self.assertEqual(PARTICIPATE_BUTTON_SELECTOR, ".btn")
         self.assertEqual(AD_COMPLETE_SELECTOR, "#ext-ab-time")
+        self.assertEqual(AD_FRAME_PATH, "/hyfe/task-ext/index.html")
         self.assertEqual(BASE_COIN_BUTTON_SELECTOR, "button.return-gold")
         self.assertEqual(BONUS_COIN_BUTTON_SELECTOR, "button.not-enough")
         self.assertEqual(

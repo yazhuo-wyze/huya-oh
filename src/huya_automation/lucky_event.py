@@ -22,6 +22,7 @@ FREE_DRAW_TAG_SELECTOR = ".tag"
 SELECTED_CARD_CLASS = "select-list-item"
 PARTICIPATE_BUTTON_SELECTOR = ".btn"
 AD_COMPLETE_SELECTOR = "#ext-ab-time"
+AD_FRAME_PATH = "/hyfe/task-ext/index.html"
 BASE_COIN_BUTTON_SELECTOR = "button.return-gold"
 BONUS_COIN_BUTTON_SELECTOR = "button.not-enough"
 COIN_REWARD_SELECTOR = ".reward-container"
@@ -47,6 +48,8 @@ class LuckyEventConfig:
     poll_min_seconds: float = 5.0
     poll_max_seconds: float = 10.0
     ad_poll_seconds: float = 1.0
+    ad_start_timeout_seconds: float = 5.0
+    ad_start_attempts: int = 2
     target_lucky_value: int = 200
     min_participation_seconds: int = 60
     panel_timeout_seconds: float = 10.0
@@ -99,6 +102,8 @@ async def open_lucky_event(page: Page) -> bool:
 
 async def find_activity_frame(page: Page) -> Frame | None:
     for frame in page.frames:
+        if frame.is_detached():
+            continue
         if ACTIVITY_FRAME_PATH in frame.url:
             return frame
         try:
@@ -176,19 +181,48 @@ async def select_free_draw(frame: Frame) -> bool:
     return False
 
 
-async def start_free_ad(frame: Frame) -> bool:
-    buttons = frame.locator(PARTICIPATE_BUTTON_SELECTOR)
-    for index in range(await buttons.count()):
-        button = buttons.nth(index)
-        if not await button.is_visible():
-            continue
-        text = " ".join((await button.inner_text()).split())
-        if is_free_participate_button(text) and await button.is_enabled():
-            logger.info("正在点击“看视频免费参与”")
-            await button.click()
+async def wait_for_ad_start(page: Page, timeout_seconds: float) -> bool:
+    elapsed = 0.0
+    while elapsed < timeout_seconds:
+        if any(AD_FRAME_PATH in frame.url for frame in page.frames):
+            logger.info("广告页面已成功打开")
             return True
-        if COIN_TEXT in text:
-            continue
+        await asyncio.sleep(0.25)
+        elapsed += 0.25
+    return False
+
+
+async def start_free_ad(
+    page: Page,
+    frame: Frame,
+    config: LuckyEventConfig,
+) -> bool:
+    for attempt in range(1, config.ad_start_attempts + 1):
+        buttons = frame.locator(PARTICIPATE_BUTTON_SELECTOR)
+        for index in range(await buttons.count()):
+            button = buttons.nth(index)
+            if not await button.is_visible():
+                continue
+            text = " ".join((await button.inner_text()).split())
+            if is_free_participate_button(text) and await button.is_enabled():
+                logger.info(
+                    "正在点击“看视频免费参与”，第 %d 次尝试",
+                    attempt,
+                )
+                await button.click()
+                if await wait_for_ad_start(
+                    page,
+                    config.ad_start_timeout_seconds,
+                ):
+                    return True
+                logger.warning("点击后广告未打开，准备重试")
+                break
+            if COIN_TEXT in text:
+                continue
+        refreshed_frame = await find_activity_frame(page)
+        if refreshed_frame is None:
+            return False
+        frame = refreshed_frame
     return False
 
 
@@ -201,16 +235,23 @@ async def wait_for_ad_completion(
     elapsed = 0.0
     logger.info("等待广告播放完成，最长等待 %.0f 秒", config.ad_timeout_seconds)
     while elapsed < config.ad_timeout_seconds:
-        for frame in page.frames:
-            button = frame.locator(AD_COMPLETE_SELECTOR)
-            if (
-                await button.count()
-                and await button.first.is_visible()
-                and (await button.first.inner_text()).strip() == AD_COMPLETE_TEXT
-            ):
-                await button.first.click()
-                logger.info("检测到“恭喜完成任务”，已点击完成")
-                return True
+        for frame in list(page.frames):
+            try:
+                if frame.is_detached():
+                    continue
+                button = frame.locator(AD_COMPLETE_SELECTOR)
+                if (
+                    await button.count()
+                    and await button.first.is_visible()
+                    and (await button.first.inner_text()).strip()
+                    == AD_COMPLETE_TEXT
+                ):
+                    await button.first.click()
+                    logger.info("检测到“恭喜完成任务”，已点击完成")
+                    return True
+            except PlaywrightError:
+                logger.debug("扫描广告状态时 iframe 已卸载，继续检查新 frame")
+                continue
         if stop_when_round_ends and not await is_lucky_round_active(page):
             return False
         await asyncio.sleep(config.ad_poll_seconds)
@@ -247,7 +288,13 @@ async def wait_for_lucky_value_increase(
             return None, previous_value
         frame = await find_activity_frame(page)
         if frame is not None:
-            value = await read_lucky_value(frame)
+            try:
+                value = await read_lucky_value(frame)
+            except PlaywrightError:
+                logger.debug("读取幸运值时活动 iframe 已卸载，重新查找")
+                await asyncio.sleep(config.ad_poll_seconds)
+                elapsed += config.ad_poll_seconds
+                continue
             if value > previous_value:
                 logger.info(
                     "幸运值已到账：%d -> %d",
@@ -341,7 +388,22 @@ async def claim_bonus_coins(
         return advertised_amount, advertised_amount
 
     logger.info("正在追加金币，按钮标注上限：%d", advertised_amount)
-    await button.first.click()
+    ad_started = False
+    for attempt in range(1, config.ad_start_attempts + 1):
+        logger.info("点击追加金币广告，第 %d 次尝试", attempt)
+        await button.first.click()
+        if await wait_for_ad_start(page, config.ad_start_timeout_seconds):
+            ad_started = True
+            break
+        logger.warning("追加金币广告未打开，准备重试")
+        frame = await find_activity_frame(page)
+        if frame is None:
+            return None
+        button = frame.locator(BONUS_COIN_BUTTON_SELECTOR)
+        if not await button.count() or not await button.first.is_visible():
+            return None
+    if not ad_started:
+        return None
     if not await wait_for_ad_completion(
         page,
         config,
@@ -424,6 +486,10 @@ async def participate_current_round(
 
     frame = await wait_for_activity_frame(page, config)
     while frame is not None and await is_lucky_round_active(page):
+        refreshed_frame = await find_activity_frame(page)
+        if refreshed_frame is None:
+            return None
+        frame = refreshed_frame
         lucky_value = await read_lucky_value(frame)
         logger.info(
             "当前累计幸运值：%d/%d",
@@ -443,9 +509,9 @@ async def participate_current_round(
         if not await select_free_draw(frame):
             logger.info("本轮“免费抽”入口不可用，停止本轮操作")
             return lucky_value
-        if not await start_free_ad(frame):
+        if not await start_free_ad(page, frame, config):
             logger.warning(
-                "未出现“看视频免费参与”，为避免误点金币已停止本轮操作"
+                "免费广告连续点击后仍未打开，已停止本轮操作"
             )
             return lucky_value
         if not await wait_for_ad_completion(page, config):
@@ -475,6 +541,7 @@ async def monitor_lucky_event(
     previous_active = False
     result_processed = False
     while True:
+        retry_active_round = False
         entry = page.locator(LUCKY_ENTRY_SELECTOR)
         entry_text = (
             (await entry.inner_text()).strip()
@@ -493,8 +560,9 @@ async def monitor_lucky_event(
                     await participate_current_round(page, config)
                 except (LuckyEventError, PlaywrightError) as error:
                     logger.warning("本轮活动已停止：%s", error)
+                    retry_active_round = True
                 logger.info("本轮免费广告流程结束，继续等待下一轮")
-        previous_active = active
+        previous_active = active and not retry_active_round
         if not active:
             previous_active = False
             if not result_processed and await has_coin_result_panel(page):
