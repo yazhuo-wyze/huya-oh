@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from urllib.parse import urlsplit, urlunsplit
 
 from playwright.async_api import Browser, Page, TimeoutError as PlaywrightTimeoutError
+
+logger = logging.getLogger(__name__)
 
 
 TARGET_ROOM_URL = "https://www.huya.com/660002"
@@ -42,9 +45,11 @@ async def find_or_open_room(
     context = browser.contexts[0]
     for page in context.pages:
         if is_target_room(page.url, target_url):
+            logger.info("找到已打开的目标直播间标签页")
             await page.bring_to_front()
             return page, True
 
+    logger.info("未找到目标直播间，正在新建标签页")
     page = await context.new_page()
     await page.goto(target_url, wait_until="domcontentloaded", timeout=45_000)
     await page.bring_to_front()
@@ -73,10 +78,13 @@ async def is_theater_mode(page: Page) -> bool:
 async def ensure_theater_mode(page: Page, *, dry_run: bool = False) -> bool:
     await wait_for_room(page)
     if await is_theater_mode(page):
+        logger.info("剧场模式状态检查：已开启")
         return False
     if dry_run:
+        logger.info("剧场模式状态检查：需要开启，dry-run 不点击")
         return True
 
+    logger.info("正在进入剧场模式")
     button = page.locator(THEATER_BUTTON_SELECTOR)
     # Huya may place transient player controls over this button. Dispatching the
     # element's own click preserves site behavior without clicking by coordinates.
@@ -119,10 +127,13 @@ async def ensure_room_muted(page: Page, *, dry_run: bool = False) -> bool:
         ) from error
 
     if await is_room_muted(page):
+        logger.info("直播声音状态检查：已静音")
         return False
     if dry_run:
+        logger.info("直播声音状态检查：有声音，dry-run 不点击")
         return True
 
+    logger.info("检测到直播声音，正在静音")
     await button.evaluate("(element) => element.click()")
     try:
         await page.wait_for_function(
@@ -164,10 +175,13 @@ async def ensure_player_danmu_disabled(
         ) from error
 
     if await is_player_danmu_disabled(page):
+        logger.info("播放器弹幕状态检查：已关闭")
         return False
     if dry_run:
+        logger.info("播放器弹幕状态检查：已开启，dry-run 不点击")
         return True
 
+    logger.info("检测到播放器弹幕，正在关闭")
     await button.evaluate("(element) => element.click()")
     try:
         await page.wait_for_function(

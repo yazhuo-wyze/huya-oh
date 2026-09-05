@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import getpass
+import logging
 import os
 import time
 from dataclasses import dataclass
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
+
+logger = logging.getLogger(__name__)
 
 
 LOGIN_IFRAME_SELECTOR = "#UDBSdkLgn_iframe"
@@ -55,6 +58,7 @@ async def is_logged_in(page: Page) -> bool:
 async def open_login_dialog(page: Page) -> None:
     login_link = page.get_by_role("link", name="登录", exact=True)
     try:
+        logger.info("当前未登录，正在打开账号密码登录框")
         await login_link.click(timeout=10_000)
         await page.frame_locator(LOGIN_IFRAME_SELECTOR).locator(
             USERNAME_SELECTOR
@@ -70,8 +74,10 @@ async def wait_for_login_result(page: Page, timeout_seconds: float = 20.0) -> No
 
     while time.monotonic() < deadline:
         if await is_logged_in(page):
+            logger.info("虎牙登录状态验证成功")
             return
         if await captcha.is_visible():
+            logger.warning("登录流程出现验证码，需要人工处理")
             raise LoginError(
                 "登录需要验证码。登录框已保留，请人工完成验证后重新运行。"
             )
@@ -90,9 +96,11 @@ async def ensure_logged_in(
 ) -> bool:
     """Ensure the room is authenticated and return whether login was needed."""
     if await is_logged_in(page):
+        logger.info("检测到已登录状态")
         return False
 
     if dry_run:
+        logger.info("dry-run：检测到当前未登录")
         return True
     if credentials is None:
         raise LoginError(
@@ -101,6 +109,7 @@ async def ensure_logged_in(
         )
 
     await open_login_dialog(page)
+    logger.info("正在提交账号密码，日志不会记录凭据内容")
     login_frame = page.frame_locator(LOGIN_IFRAME_SELECTOR)
     await login_frame.locator(USERNAME_SELECTOR).fill(credentials.username)
     await login_frame.locator(PASSWORD_SELECTOR).fill(credentials.password)

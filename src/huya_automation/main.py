@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
+import logging
 
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright
@@ -17,6 +17,7 @@ from .edge import (
     ensure_debug_edge,
 )
 from .lucky_event import LuckyEventError, monitor_lucky_event
+from .logging_config import configure_logging
 from .room import (
     RoomError,
     ensure_player_danmu_disabled,
@@ -24,6 +25,8 @@ from .room import (
     ensure_theater_mode,
     find_or_open_room,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,10 +54,18 @@ def parse_args() -> argparse.Namespace:
 
 async def run(args: argparse.Namespace) -> int:
     config = EdgeConfig(debug_port=args.debug_port)
+    logger.info("启动虎牙直播间自动化，dry_run=%s", args.dry_run)
+    logger.info("检查自动化 Edge，CDP 地址：%s", config.cdp_http_url)
     await ensure_debug_edge(config, allow_restart=False)
     async with async_playwright() as playwright:
+        logger.info("正在连接 Microsoft Edge")
         browser = await connect_edge(playwright, config)
         page, reused = await find_or_open_room(browser)
+        logger.info(
+            "%s直播间标签页：%s",
+            "复用" if reused else "新建",
+            page.url,
+        )
         credentials = Credentials.from_environment()
         if (
             credentials is None
@@ -74,49 +85,49 @@ async def run(args: argparse.Namespace) -> int:
         )
         changed = await ensure_theater_mode(page, dry_run=args.dry_run)
 
-        print(f"{'复用' if reused else '新建'}直播间标签页：{page.url}")
         if args.dry_run and login_needed:
-            print("dry-run：当前未登录，正式运行时将打开账号密码登录框。")
+            logger.info("dry-run：当前未登录，正式运行时将打开登录框")
         elif login_needed:
-            print("账号密码登录成功。")
+            logger.info("账号密码登录成功")
         else:
-            print("当前已经登录。")
+            logger.info("当前已经登录")
         if args.dry_run and muted:
-            print("dry-run：当前直播间有声音，正式运行时将自动静音。")
+            logger.info("dry-run：当前直播间有声音，正式运行时将自动静音")
         elif muted:
-            print("已静音直播间。")
+            logger.info("已静音直播间")
         else:
-            print("当前直播间已经静音。")
+            logger.info("当前直播间已经静音")
         if args.dry_run and danmu_disabled:
-            print("dry-run：播放器弹幕已开启，正式运行时将自动关闭。")
+            logger.info("dry-run：播放器弹幕已开启，正式运行时将自动关闭")
         elif danmu_disabled:
-            print("已关闭播放器弹幕。")
+            logger.info("已关闭播放器弹幕")
         else:
-            print("播放器弹幕已经关闭。")
+            logger.info("播放器弹幕已经关闭")
         if args.dry_run and changed:
-            print("dry-run：当前不是剧场模式，正式运行时将自动进入。")
+            logger.info("dry-run：当前不是剧场模式，正式运行时将自动进入")
         elif changed:
-            print("已进入剧场模式。")
+            logger.info("已进入剧场模式")
         else:
-            print("当前已经是剧场模式。")
+            logger.info("当前已经是剧场模式")
         if args.no_monitor:
-            print("浏览器将保持打开。")
+            logger.info("初始化完成，不启动活动监控，浏览器将保持打开")
         else:
-            print("开始每 15 秒检测欧皇时刻活动，按 Ctrl+C 停止。")
+            logger.info("开始每 15 秒检测欧皇时刻活动，按 Ctrl+C 停止")
             await monitor_lucky_event(page, dry_run=args.dry_run)
     return 0
 
 
 def main() -> None:
+    configure_logging()
     load_dotenv()
     args = parse_args()
     try:
         raise SystemExit(asyncio.run(run(args)))
     except (EdgeError, LoginError, LuckyEventError, RoomError) as error:
-        print(f"错误：{error}", file=sys.stderr)
+        logger.error("%s", error)
         raise SystemExit(2) from error
     except KeyboardInterrupt:
-        print("\n已取消。", file=sys.stderr)
+        logger.info("用户已停止程序")
         raise SystemExit(130)
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import subprocess
 import time
 import urllib.error
@@ -13,6 +14,8 @@ from pathlib import Path
 from typing import Callable
 
 from playwright.async_api import Browser, Playwright
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_EDGE_EXECUTABLE = Path(
@@ -114,6 +117,7 @@ def launch_debug_edge(config: EdgeConfig) -> None:
     if not config.executable.is_file():
         raise EdgeError(f"未找到 Microsoft Edge：{config.executable}")
     config.user_data_dir.mkdir(parents=True, exist_ok=True)
+    logger.info("启动自动化 Edge，用户目录：%s", config.user_data_dir)
 
     log_file = Path("edge-debug.log").open("a", encoding="utf-8")
     subprocess.Popen(
@@ -138,6 +142,7 @@ async def ensure_debug_edge(
     allow_restart: bool,
 ) -> None:
     if is_cdp_ready(config):
+        logger.info("检测到可用的 Edge CDP 服务")
         return
 
     if is_edge_running(config):
@@ -150,6 +155,7 @@ async def ensure_debug_edge(
         )
 
     launch_debug_edge(config)
+    logger.info("等待 Edge CDP 服务就绪")
     ready = await wait_until(
         lambda: is_cdp_ready(config),
         expected=True,
@@ -160,10 +166,15 @@ async def ensure_debug_edge(
             "Edge 已启动，但远程调试端口不可用。新版 Edge 可能禁止默认用户"
             "目录启用远程调试。程序不会复制或修改用户数据；详情见 edge-debug.log。"
         )
+    logger.info("Edge CDP 服务已就绪")
 
 
 async def connect_edge(playwright: Playwright, config: EdgeConfig) -> Browser:
     try:
-        return await playwright.chromium.connect_over_cdp(config.cdp_http_url)
+        browser = await playwright.chromium.connect_over_cdp(
+            config.cdp_http_url
+        )
+        logger.info("已连接 Edge，共发现 %d 个浏览器上下文", len(browser.contexts))
+        return browser
     except Exception as error:
         raise EdgeError(f"无法通过 CDP 连接 Edge：{error}") from error
