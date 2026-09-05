@@ -13,6 +13,8 @@ from huya_automation.lucky_event import (
     is_active_round_text,
     is_free_participate_button,
     is_safe_free_draw_card,
+    LuckyEventConfig,
+    next_poll_delay,
     parse_base_coin_amount,
     parse_bonus_coin_amount,
     parse_countdown_seconds,
@@ -48,6 +50,11 @@ class LuckyRoundStateTest(unittest.TestCase):
     def test_rejects_invalid_countdown(self) -> None:
         self.assertIsNone(parse_countdown_seconds("已结束"))
         self.assertIsNone(parse_countdown_seconds("00:60"))
+
+    def test_activity_poll_delay_is_between_five_and_ten_seconds(self) -> None:
+        delay = next_poll_delay(LuckyEventConfig())
+        self.assertGreaterEqual(delay, 5.0)
+        self.assertLessEqual(delay, 10.0)
 
 
 class LuckyEventSelectorTest(unittest.TestCase):

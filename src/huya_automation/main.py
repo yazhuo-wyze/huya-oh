@@ -112,7 +112,7 @@ async def run(args: argparse.Namespace) -> int:
         if args.no_monitor:
             logger.info("初始化完成，不启动活动监控，浏览器将保持打开")
         else:
-            logger.info("开始每 15 秒检测欧皇时刻活动，按 Ctrl+C 停止")
+            logger.info("开始每 5–10 秒检测欧皇时刻活动，按 Ctrl+C 停止")
             await monitor_lucky_event(page, dry_run=args.dry_run)
     return 0
 

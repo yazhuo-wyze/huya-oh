@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 from dataclasses import dataclass
 
@@ -43,7 +44,8 @@ class LuckyEventError(RuntimeError):
 
 @dataclass(frozen=True)
 class LuckyEventConfig:
-    poll_seconds: float = 15.0
+    poll_min_seconds: float = 5.0
+    poll_max_seconds: float = 10.0
     ad_poll_seconds: float = 1.0
     target_lucky_value: int = 200
     min_participation_seconds: int = 60
@@ -70,6 +72,10 @@ def parse_countdown_seconds(text: str) -> int | None:
     if seconds >= 60:
         return None
     return minutes * 60 + seconds
+
+
+def next_poll_delay(config: LuckyEventConfig) -> float:
+    return random.uniform(config.poll_min_seconds, config.poll_max_seconds)
 
 
 async def can_start_free_ad(page: Page, minimum_seconds: int) -> bool:
@@ -497,4 +503,6 @@ async def monitor_lucky_event(
                 except (LuckyEventError, PlaywrightError) as error:
                     logger.warning("金币领取流程已停止：%s", error)
                 result_processed = True
-        await asyncio.sleep(config.poll_seconds)
+        delay = next_poll_delay(config)
+        logger.info("下一次活动巡检将在 %.1f 秒后执行", delay)
+        await asyncio.sleep(delay)
