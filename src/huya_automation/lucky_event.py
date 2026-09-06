@@ -226,6 +226,26 @@ async def start_free_ad(
     return False
 
 
+async def click_completed_ad_if_present(page: Page) -> bool:
+    for frame in list(page.frames):
+        try:
+            if frame.is_detached():
+                continue
+            button = frame.locator(AD_COMPLETE_SELECTOR)
+            if (
+                await button.count()
+                and await button.first.is_visible()
+                and (await button.first.inner_text()).strip()
+                == AD_COMPLETE_TEXT
+            ):
+                await button.first.click()
+                logger.info("检测到遗留的“恭喜完成任务”，已点击完成")
+                return True
+        except PlaywrightError:
+            logger.debug("处理已完成广告时 iframe 已卸载，继续检查")
+    return False
+
+
 async def wait_for_ad_completion(
     page: Page,
     config: LuckyEventConfig,
@@ -235,23 +255,8 @@ async def wait_for_ad_completion(
     elapsed = 0.0
     logger.info("等待广告播放完成，最长等待 %.0f 秒", config.ad_timeout_seconds)
     while elapsed < config.ad_timeout_seconds:
-        for frame in list(page.frames):
-            try:
-                if frame.is_detached():
-                    continue
-                button = frame.locator(AD_COMPLETE_SELECTOR)
-                if (
-                    await button.count()
-                    and await button.first.is_visible()
-                    and (await button.first.inner_text()).strip()
-                    == AD_COMPLETE_TEXT
-                ):
-                    await button.first.click()
-                    logger.info("检测到“恭喜完成任务”，已点击完成")
-                    return True
-            except PlaywrightError:
-                logger.debug("扫描广告状态时 iframe 已卸载，继续检查新 frame")
-                continue
+        if await click_completed_ad_if_present(page):
+            return True
         if stop_when_round_ends and not await is_lucky_round_active(page):
             return False
         await asyncio.sleep(config.ad_poll_seconds)
@@ -437,6 +442,8 @@ async def claim_result_coins(
 ) -> int:
     total = 0
     bonus_total = 0
+    if await click_completed_ad_if_present(page):
+        await asyncio.sleep(0.5)
     pending = await accept_coin_reward(page, config, dry_run=dry_run)
     if pending is not None:
         total += pending
@@ -485,6 +492,9 @@ async def participate_current_round(
         return None
 
     frame = await wait_for_activity_frame(page, config)
+    if await click_completed_ad_if_present(page):
+        await asyncio.sleep(config.ad_poll_seconds)
+        frame = await wait_for_activity_frame(page, config)
     while frame is not None and await is_lucky_round_active(page):
         refreshed_frame = await find_activity_frame(page)
         if refreshed_frame is None:
@@ -570,7 +580,8 @@ async def monitor_lucky_event(
                     await claim_result_coins(page, config, dry_run=dry_run)
                 except (LuckyEventError, PlaywrightError) as error:
                     logger.warning("金币领取流程已停止：%s", error)
-                result_processed = True
+                else:
+                    result_processed = True
         delay = next_poll_delay(config)
         logger.info("下一次活动巡检将在 %.1f 秒后执行", delay)
         await asyncio.sleep(delay)
