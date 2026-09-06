@@ -7,6 +7,7 @@ import logging
 import random
 import re
 from dataclasses import dataclass
+from enum import Enum
 
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Frame, Page
@@ -23,6 +24,8 @@ SELECTED_CARD_CLASS = "select-list-item"
 PARTICIPATE_BUTTON_SELECTOR = ".btn"
 AD_COMPLETE_SELECTOR = "#ext-ab-time"
 AD_FRAME_PATH = "/hyfe/task-ext/index.html"
+AD_FRAME_SELECTOR = f"iframe[src*='{AD_FRAME_PATH}']"
+AD_MODAL_CLOSE_SELECTOR = "#close-modalh5"
 BASE_COIN_BUTTON_SELECTOR = "button.return-gold"
 BONUS_COIN_BUTTON_SELECTOR = "button.not-enough"
 COIN_REWARD_SELECTOR = ".reward-container"
@@ -35,12 +38,20 @@ BONUS_COIN_PATTERN = re.compile(r"^不够！再领(\d+)金币$")
 FREE_DRAW_TEXT = "免费抽"
 FREE_PARTICIPATE_TEXT = "看视频免费参与"
 AD_COMPLETE_TEXT = "恭喜完成任务"
+AD_UNAVAILABLE_TEXT = "没有获取到广告信息"
+AD_START_SETTLE_SECONDS = 1.0
 COIN_CONFIRM_TEXT = "开心收下"
 COIN_TEXT = "金币"
 
 
 class LuckyEventError(RuntimeError):
     """Raised when an active lucky event reaches an unknown state."""
+
+
+class AdStartStatus(Enum):
+    STARTED = "started"
+    UNAVAILABLE = "unavailable"
+    TIMED_OUT = "timed_out"
 
 
 @dataclass(frozen=True)
@@ -50,6 +61,8 @@ class LuckyEventConfig:
     ad_poll_seconds: float = 1.0
     ad_start_timeout_seconds: float = 5.0
     ad_start_attempts: int = 2
+    ad_retry_delay_seconds: float = 1.0
+    ad_close_timeout_seconds: float = 5.0
     target_lucky_value: int = 200
     min_participation_seconds: int = 60
     panel_timeout_seconds: float = 10.0
@@ -133,6 +146,10 @@ def is_free_participate_button(text: str) -> bool:
     return " ".join(text.split()) == FREE_PARTICIPATE_TEXT
 
 
+def is_ad_unavailable_text(text: str) -> bool:
+    return AD_UNAVAILABLE_TEXT in " ".join(text.split())
+
+
 def parse_base_coin_amount(text: str) -> int | None:
     match = BASE_COIN_PATTERN.fullmatch(" ".join(text.split()))
     return int(match.group(1)) if match else None
@@ -181,15 +198,88 @@ async def select_free_draw(frame: Frame) -> bool:
     return False
 
 
-async def wait_for_ad_start(page: Page, timeout_seconds: float) -> bool:
+async def find_ad_frame(page: Page) -> Frame | None:
+    for frame in list(page.frames):
+        if not frame.is_detached() and AD_FRAME_PATH in frame.url:
+            return frame
+    return None
+
+
+async def wait_for_ad_start(
+    page: Page,
+    timeout_seconds: float,
+) -> AdStartStatus:
     elapsed = 0.0
+    frame_seen_at: float | None = None
     while elapsed < timeout_seconds:
-        if any(AD_FRAME_PATH in frame.url for frame in page.frames):
-            logger.info("广告页面已成功打开")
-            return True
+        frame = await find_ad_frame(page)
+        if frame is not None:
+            if frame_seen_at is None:
+                frame_seen_at = elapsed
+            try:
+                body_text = await frame.locator("body").inner_text(timeout=500)
+            except PlaywrightError:
+                await asyncio.sleep(0.25)
+                elapsed += 0.25
+                continue
+            if is_ad_unavailable_text(body_text):
+                logger.warning("广告获取失败：%s", AD_UNAVAILABLE_TEXT)
+                return AdStartStatus.UNAVAILABLE
+            if elapsed - frame_seen_at >= AD_START_SETTLE_SECONDS:
+                logger.info("广告页面已成功打开")
+                return AdStartStatus.STARTED
+        else:
+            frame_seen_at = None
         await asyncio.sleep(0.25)
         elapsed += 0.25
-    return False
+    return AdStartStatus.TIMED_OUT
+
+
+async def close_ad_modal(page: Page, timeout_seconds: float) -> None:
+    iframe = page.locator(AD_FRAME_SELECTOR).filter(visible=True).first
+    if not await iframe.count():
+        return
+    modal = iframe.locator("xpath=..")
+    close_button = modal.locator(AD_MODAL_CLOSE_SELECTOR)
+    if not await close_button.count() or not await close_button.first.is_visible():
+        raise LuckyEventError("广告获取失败，但未找到对应广告弹层的关闭按钮。")
+
+    logger.info("正在关闭未获取到广告的弹层")
+    await close_button.first.click()
+    elapsed = 0.0
+    while elapsed < timeout_seconds:
+        if not await page.locator(AD_FRAME_SELECTOR).count():
+            logger.info("广告弹层已关闭，准备重新获取广告")
+            return
+        await asyncio.sleep(0.25)
+        elapsed += 0.25
+    raise LuckyEventError("点击关闭后广告弹层仍未消失，已停止重试。")
+
+
+async def recover_unavailable_ad(
+    page: Page,
+    config: LuckyEventConfig,
+) -> None:
+    await close_ad_modal(page, config.ad_close_timeout_seconds)
+    await asyncio.sleep(config.ad_retry_delay_seconds)
+
+
+async def close_unavailable_ad_if_present(
+    page: Page,
+    config: LuckyEventConfig,
+) -> bool:
+    frame = await find_ad_frame(page)
+    if frame is None:
+        return False
+    try:
+        body_text = await frame.locator("body").inner_text(timeout=500)
+    except PlaywrightError:
+        return False
+    if not is_ad_unavailable_text(body_text):
+        return False
+    logger.warning("检测到遗留的广告获取失败弹层")
+    await recover_unavailable_ad(page, config)
+    return True
 
 
 async def start_free_ad(
@@ -210,12 +300,17 @@ async def start_free_ad(
                     attempt,
                 )
                 await button.click()
-                if await wait_for_ad_start(
+                status = await wait_for_ad_start(
                     page,
                     config.ad_start_timeout_seconds,
-                ):
+                )
+                if status is AdStartStatus.STARTED:
                     return True
-                logger.warning("点击后广告未打开，准备重试")
+                if status is AdStartStatus.UNAVAILABLE:
+                    await recover_unavailable_ad(page, config)
+                    logger.info("将重新尝试获取免费广告")
+                else:
+                    logger.warning("点击后广告未打开，准备重试")
                 break
             if COIN_TEXT in text:
                 continue
@@ -223,6 +318,8 @@ async def start_free_ad(
         if refreshed_frame is None:
             return False
         frame = refreshed_frame
+        if attempt < config.ad_start_attempts:
+            await select_free_draw(frame)
     return False
 
 
@@ -397,10 +494,18 @@ async def claim_bonus_coins(
     for attempt in range(1, config.ad_start_attempts + 1):
         logger.info("点击追加金币广告，第 %d 次尝试", attempt)
         await button.first.click()
-        if await wait_for_ad_start(page, config.ad_start_timeout_seconds):
+        status = await wait_for_ad_start(
+            page,
+            config.ad_start_timeout_seconds,
+        )
+        if status is AdStartStatus.STARTED:
             ad_started = True
             break
-        logger.warning("追加金币广告未打开，准备重试")
+        if status is AdStartStatus.UNAVAILABLE:
+            await recover_unavailable_ad(page, config)
+            logger.info("将重新尝试获取追加金币广告")
+        else:
+            logger.warning("追加金币广告未打开，准备重试")
         frame = await find_activity_frame(page)
         if frame is None:
             return None
@@ -442,6 +547,8 @@ async def claim_result_coins(
 ) -> int:
     total = 0
     bonus_total = 0
+    if not dry_run:
+        await close_unavailable_ad_if_present(page, config)
     if await click_completed_ad_if_present(page):
         await asyncio.sleep(0.5)
     pending = await accept_coin_reward(page, config, dry_run=dry_run)
@@ -488,6 +595,7 @@ async def participate_current_round(
         return None
     if dry_run:
         return None
+    await close_unavailable_ad_if_present(page, config)
     if not await open_lucky_event(page):
         return None
 

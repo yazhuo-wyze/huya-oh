@@ -4,6 +4,10 @@ from huya_automation.lucky_event import (
     ACTIVITY_FRAME_PATH,
     AD_COMPLETE_SELECTOR,
     AD_FRAME_PATH,
+    AD_FRAME_SELECTOR,
+    AD_MODAL_CLOSE_SELECTOR,
+    AD_START_SETTLE_SECONDS,
+    AD_UNAVAILABLE_TEXT,
     BASE_COIN_BUTTON_SELECTOR,
     BONUS_COIN_BUTTON_SELECTOR,
     COIN_CONFIRM_BUTTON_SELECTOR,
@@ -12,6 +16,7 @@ from huya_automation.lucky_event import (
     LUCKY_VALUE_SELECTOR,
     PARTICIPATE_BUTTON_SELECTOR,
     is_active_round_text,
+    is_ad_unavailable_text,
     is_free_participate_button,
     is_safe_free_draw_card,
     LuckyEventConfig,
@@ -69,6 +74,12 @@ class LuckyEventSelectorTest(unittest.TestCase):
         self.assertEqual(PARTICIPATE_BUTTON_SELECTOR, ".btn")
         self.assertEqual(AD_COMPLETE_SELECTOR, "#ext-ab-time")
         self.assertEqual(AD_FRAME_PATH, "/hyfe/task-ext/index.html")
+        self.assertEqual(
+            AD_FRAME_SELECTOR,
+            "iframe[src*='/hyfe/task-ext/index.html']",
+        )
+        self.assertEqual(AD_MODAL_CLOSE_SELECTOR, "#close-modalh5")
+        self.assertEqual(AD_START_SETTLE_SECONDS, 1.0)
         self.assertEqual(BASE_COIN_BUTTON_SELECTOR, "button.return-gold")
         self.assertEqual(BONUS_COIN_BUTTON_SELECTOR, "button.not-enough")
         self.assertEqual(
@@ -93,6 +104,11 @@ class LuckyEventSafetyTest(unittest.TestCase):
     def test_only_accepts_exact_free_participation_button(self) -> None:
         self.assertTrue(is_free_participate_button("看视频免费参与 "))
         self.assertFalse(is_free_participate_button("立即参与 (500金币)"))
+
+    def test_recognizes_exact_ad_unavailable_message(self) -> None:
+        self.assertEqual(AD_UNAVAILABLE_TEXT, "没有获取到广告信息")
+        self.assertTrue(is_ad_unavailable_text(" 没有获取到广告信息 "))
+        self.assertFalse(is_ad_unavailable_text("恭喜完成任务"))
 
     def test_only_accepts_base_coin_claim_button(self) -> None:
         self.assertEqual(parse_base_coin_amount("只领800金币"), 800)
