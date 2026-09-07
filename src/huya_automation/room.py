@@ -40,7 +40,7 @@ async def find_or_open_room(
     target_url: str = TARGET_ROOM_URL,
 ) -> tuple[Page, bool]:
     if not browser.contexts:
-        raise RoomError("Edge 没有可用的浏览器上下文。")
+        raise RoomError("浏览器没有可用的上下文。")
 
     context = browser.contexts[0]
     for page in context.pages:

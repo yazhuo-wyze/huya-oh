@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "huya-automation"
 version = "0.1.0"
-description = "Local Microsoft Edge automation for a Huya live room"
+description = "Local Edge or Chrome automation for a Huya live room"
 requires-python = ">=3.11"
 dependencies = [
     "playwright>=1.52,<2",

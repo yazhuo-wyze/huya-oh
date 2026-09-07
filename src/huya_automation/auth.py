@@ -105,7 +105,7 @@ async def ensure_logged_in(
     if credentials is None:
         raise LoginError(
             "当前未登录。请设置 HUYA_USERNAME、HUYA_PASSWORD 后重新运行，"
-            "或直接在自动化 Edge 中手动登录。"
+            "或直接在自动化浏览器中手动登录。"
         )
 
     await open_login_dialog(page)

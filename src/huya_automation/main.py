@@ -1,4 +1,4 @@
-"""Command-line entry point for opening the Huya room in Edge."""
+"""Command-line entry point for opening the Huya room in a local browser."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from dotenv import load_dotenv
 from playwright.async_api import async_playwright
 
 from .auth import Credentials, LoginError, ensure_logged_in, is_logged_in
-from .edge import (
-    EdgeConfig,
-    EdgeError,
-    connect_edge,
-    ensure_debug_edge,
+from .browser import (
+    BrowserError,
+    connect_browser,
+    ensure_debug_browser,
+    select_browser_config,
 )
 from .lucky_event import LuckyEventError, monitor_lucky_event
 from .instance_lock import InstanceLockError, acquire_instance_lock
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="使用本机 Microsoft Edge 打开虎牙直播间并进入剧场模式。"
+        description="使用本机 Edge 或 Chrome 打开虎牙直播间并进入剧场模式。"
     )
     parser.add_argument(
         "--dry-run",
@@ -48,19 +48,23 @@ def parse_args() -> argparse.Namespace:
         "--debug-port",
         type=int,
         default=9222,
-        help="Edge CDP 远程调试端口，默认 9222。",
+        help="浏览器 CDP 远程调试端口，默认 9222。",
     )
     return parser.parse_args()
 
 
 async def run(args: argparse.Namespace) -> int:
-    config = EdgeConfig(debug_port=args.debug_port)
+    config = select_browser_config(debug_port=args.debug_port)
     logger.info("启动虎牙直播间自动化，dry_run=%s", args.dry_run)
-    logger.info("检查自动化 Edge，CDP 地址：%s", config.cdp_http_url)
-    await ensure_debug_edge(config, allow_restart=False)
+    logger.info(
+        "已选择 %s，CDP 地址：%s",
+        config.display_name,
+        config.cdp_http_url,
+    )
+    await ensure_debug_browser(config, allow_restart=False)
     async with async_playwright() as playwright:
-        logger.info("正在连接 Microsoft Edge")
-        browser = await connect_edge(playwright, config)
+        logger.info("正在连接 %s", config.display_name)
+        browser = await connect_browser(playwright, config)
         page, reused = await find_or_open_room(browser)
         logger.info(
             "%s直播间标签页：%s",
@@ -127,7 +131,7 @@ def main() -> None:
         lock_file = acquire_instance_lock()
         raise SystemExit(asyncio.run(run(args)))
     except (
-        EdgeError,
+        BrowserError,
         InstanceLockError,
         LoginError,
         LuckyEventError,
