@@ -20,6 +20,7 @@ LOGIN_IFRAME_SELECTOR = "#UDBSdkLgn_iframe"
 USERNAME_SELECTOR = "#username"
 PASSWORD_SELECTOR = "#password"
 SUBMIT_SELECTOR = "#login-btn"
+LOGGED_IN_SELECTOR = '[class*="Logined"]'
 
 
 class LoginError(RuntimeError):
@@ -40,9 +41,34 @@ async def any_locator_visible(locator: Locator) -> bool:
     return False
 
 
-async def is_logged_in(page: Page) -> bool:
-    login_link = page.get_by_role("link", name="登录", exact=True)
-    return not await login_link.is_visible()
+async def is_logged_in(page: Page, *, timeout_ms: float = 30_000) -> bool:
+    try:
+        state = await page.wait_for_function(
+            """selectors => {
+                const visible = element => Boolean(
+                    element
+                    && (element.offsetWidth || element.offsetHeight
+                        || element.getClientRects().length)
+                );
+                if (visible(document.querySelector(selectors.loggedIn))) {
+                    return "logged-in";
+                }
+                const loginLink = [...document.querySelectorAll("a")]
+                    .find(element =>
+                        element.textContent?.trim() === "登录" && visible(element)
+                    );
+                return loginLink ? "logged-out" : false;
+            }""",
+            arg={
+                "loggedIn": LOGGED_IN_SELECTOR,
+            },
+            timeout=timeout_ms,
+        )
+    except PlaywrightTimeoutError as error:
+        raise LoginError(
+            "无法确认虎牙登录状态，页面可能尚未加载或结构已变化。"
+        ) from error
+    return await state.json_value() == "logged-in"
 
 
 async def open_login_dialog(page: Page) -> None:
@@ -63,9 +89,14 @@ async def wait_for_login_result(page: Page, timeout_seconds: float = 20.0) -> No
     captcha = login_frame.locator('input[placeholder="请输入验证码"]')
 
     while time.monotonic() < deadline:
-        if await is_logged_in(page):
-            logger.info("虎牙登录状态验证成功")
-            return
+        try:
+            if await is_logged_in(page, timeout_ms=500):
+                logger.info("虎牙登录状态验证成功")
+                return
+        except LoginError:
+            # The header can briefly show neither state while login cookies and
+            # user information are being refreshed.
+            pass
         if await any_locator_visible(captcha):
             logger.warning("登录流程出现验证码，需要人工处理")
             raise LoginError(

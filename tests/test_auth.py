@@ -21,10 +21,10 @@ class LocatorVisibilityTest(unittest.IsolatedAsyncioTestCase):
 
 class LoginStateTest(unittest.IsolatedAsyncioTestCase):
     async def test_logged_in_does_not_require_credentials(self) -> None:
-        login_link = MagicMock()
-        login_link.is_visible = AsyncMock(return_value=False)
+        state = MagicMock()
+        state.json_value = AsyncMock(return_value="logged-in")
         page = MagicMock()
-        page.get_by_role.return_value = login_link
+        page.wait_for_function = AsyncMock(return_value=state)
 
         changed = await ensure_logged_in(page, credentials=None)
 
@@ -32,13 +32,16 @@ class LoginStateTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_dry_run_reports_login_without_opening_dialog(self) -> None:
         login_link = MagicMock()
-        login_link.is_visible = AsyncMock(return_value=True)
+        state = MagicMock()
+        state.json_value = AsyncMock(return_value="logged-out")
         page = MagicMock()
         page.get_by_role.return_value = login_link
+        page.wait_for_function = AsyncMock(return_value=state)
 
         changed = await ensure_logged_in(page, credentials=None, dry_run=True)
 
         self.assertTrue(changed)
+        page.wait_for_function.assert_awaited_once()
         login_link.click.assert_not_called()
 
 
