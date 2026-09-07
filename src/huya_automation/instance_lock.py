@@ -2,30 +2,66 @@
 
 from __future__ import annotations
 
-import fcntl
+import os
+import platform
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TextIO
 
-
-LOCK_FILE = (
-    Path.home()
-    / "Library"
-    / "Application Support"
-    / "Huya Automation"
-    / "automation.lock"
-)
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 
 class InstanceLockError(RuntimeError):
     """Raised when another automation process already owns the lock."""
 
 
-def acquire_instance_lock() -> TextIO:
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    lock_file = LOCK_FILE.open("w", encoding="utf-8")
-    try:
+def default_lock_file(
+    platform_name: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    system = platform_name or platform.system()
+    environment = os.environ if environ is None else environ
+    if system == "Darwin":
+        root = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Huya Automation"
+        )
+    elif system == "Windows":
+        local_app_data = environment.get("LOCALAPPDATA")
+        if not local_app_data:
+            local_app_data = str(Path.home() / "AppData" / "Local")
+        root = Path(local_app_data) / "Huya Automation"
+    else:
+        raise InstanceLockError(
+            f"不支持的操作系统：{system}。目前仅支持 macOS 和 Windows。"
+        )
+    return root / "automation.lock"
+
+
+def lock_file_handle(lock_file: TextIO) -> None:
+    if os.name == "nt":
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write("\0")
+            lock_file.flush()
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
         fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError as error:
+
+
+def acquire_instance_lock(lock_path: Path | None = None) -> TextIO:
+    path = lock_path or default_lock_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = path.open("a+", encoding="utf-8")
+    try:
+        lock_file_handle(lock_file)
+    except (BlockingIOError, OSError) as error:
         lock_file.close()
         raise InstanceLockError(
             "已有一个 huya-open-room 进程正在运行，请勿重复启动。"

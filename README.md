@@ -1,5 +1,7 @@
 # Huya OH
 
+[![Tests](https://github.com/yazhuo-wyze/huya-oh/actions/workflows/tests.yml/badge.svg)](https://github.com/yazhuo-wyze/huya-oh/actions/workflows/tests.yml)
+
 基于 Python、Playwright 和本机 Chromium 浏览器的虎牙直播间自动化工具。
 
 程序目前固定服务于直播间
@@ -7,7 +9,7 @@
 连接、登录状态检查、播放器初始化和“欧皇时刻”活动监控。
 
 > [!IMPORTANT]
-> 本项目当前仅支持 macOS，依赖本机安装的 Microsoft Edge 或 Google Chrome。
+> 本项目支持 macOS 和 Windows，依赖本机安装的 Microsoft Edge 或 Google Chrome。
 > 页面自动化依赖虎牙现有 DOM 结构，网站改版后可能需要更新选择器。
 
 ## 功能
@@ -39,7 +41,7 @@
 
 | 项目 | 要求 |
 |---|---|
-| 操作系统 | macOS |
+| 操作系统 | macOS、Windows 10/11 |
 | Python | 3.11 或更高版本 |
 | 浏览器 | Microsoft Edge（优先）或 Google Chrome |
 | 目标直播间 | `https://www.huya.com/660002` |
@@ -49,26 +51,45 @@
 
 ## 安装
 
+### macOS
+
 ```bash
 git clone https://github.com/yazhuo-wyze/huya-oh.git
 cd huya-oh
 
 python3 -m venv .venv
-.venv/bin/pip install -e .
+.venv/bin/python -m pip install -e .
+source .venv/bin/activate
 ```
 
-安装完成后会生成命令行入口：
+### Windows PowerShell
 
-```bash
-.venv/bin/huya-open-room --help
+```powershell
+git clone https://github.com/yazhuo-wyze/huya-oh.git
+Set-Location huya-oh
+
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+.\.venv\Scripts\Activate.ps1
 ```
+
+后续示例默认已经激活虚拟环境。安装完成后可执行
+`huya-open-room --help` 查看命令说明。
 
 ## 登录配置
 
 推荐复制环境变量模板：
 
+macOS：
+
 ```bash
 cp .env.example .env
+```
+
+Windows PowerShell：
+
+```powershell
+Copy-Item .env.example .env
 ```
 
 然后编辑 `.env`：
@@ -88,7 +109,7 @@ HUYA_PASSWORD=你的密码
 ### 持续监控活动
 
 ```bash
-.venv/bin/huya-open-room
+huya-open-room
 ```
 
 程序会保持运行并持续检测活动，按 `Ctrl+C` 停止。
@@ -96,7 +117,7 @@ HUYA_PASSWORD=你的密码
 ### 仅初始化直播间
 
 ```bash
-.venv/bin/huya-open-room --no-monitor
+huya-open-room --no-monitor
 ```
 
 完成登录检查、静音、关闭弹幕和剧场模式初始化后退出，浏览器保持打开。
@@ -104,7 +125,7 @@ HUYA_PASSWORD=你的密码
 ### 只检测，不点击
 
 ```bash
-.venv/bin/huya-open-room --dry-run
+huya-open-room --dry-run
 ```
 
 该模式仍会启动或连接自动化浏览器并打开直播间，但不会提交登录信息、切换
@@ -113,7 +134,7 @@ HUYA_PASSWORD=你的密码
 ### 使用其他 CDP 端口
 
 ```bash
-.venv/bin/huya-open-room --debug-port 9333
+huya-open-room --debug-port 9333
 ```
 
 默认端口为 `9222`。如果端口已被其他浏览器占用，程序会拒绝误连接并提示
@@ -121,11 +142,20 @@ HUYA_PASSWORD=你的密码
 
 ## 浏览器数据
 
-Edge 与 Chrome 使用不同的自动化 Profile：
+Edge 与 Chrome 使用不同的自动化 Profile。
+
+macOS：
 
 ```text
 ~/Library/Application Support/Huya Automation/Edge
 ~/Library/Application Support/Huya Automation/Chrome
+```
+
+Windows：
+
+```text
+%LOCALAPPDATA%\Huya Automation\Edge
+%LOCALAPPDATA%\Huya Automation\Chrome
 ```
 
 首次切换到另一种浏览器时，需要在对应 Profile 中重新登录虎牙。之后运行会
@@ -170,8 +200,8 @@ Edge 与 Chrome 使用不同的自动化 Profile：
 2026-09-07 10:15:05 | INFO | huya_automation.lucky_event | 活动巡检：入口状态=08:35
 ```
 
-浏览器调试输出保存在仓库根目录的 `edge-debug.log` 或 `chrome-debug.log`，
-这两个文件已被 Git 忽略。
+浏览器调试输出保存在系统的 `Huya Automation` 应用数据目录中，文件名为
+`edge-debug.log` 或 `chrome-debug.log`。
 
 ## 常见问题
 
@@ -200,10 +230,11 @@ Edge 与 Chrome 使用不同的自动化 Profile：
 
 ## 开发与测试
 
-运行全部测试：
+GitHub Actions 会在 macOS 和 Windows 上使用 Python 3.11、3.14 运行测试。
+本地运行全部测试：
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
+python -m unittest discover -s tests -v
 ```
 
 项目主要模块：

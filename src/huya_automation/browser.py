@@ -1,14 +1,17 @@
-"""Chromium browser selection, lifecycle, and CDP connection for macOS."""
+"""Cross-platform Chromium browser selection, lifecycle, and CDP connection."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import os
+import platform
 import subprocess
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -18,17 +21,6 @@ from playwright.async_api import Browser, Playwright
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_EDGE_EXECUTABLE = Path(
-    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
-)
-DEFAULT_CHROME_EXECUTABLE = Path(
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-)
-DEFAULT_AUTOMATION_DATA_ROOT = (
-    Path.home() / "Library" / "Application Support" / "Huya Automation"
-)
-
-
 class BrowserError(RuntimeError):
     """Raised when no supported browser can be safely started or connected."""
 
@@ -36,51 +28,141 @@ class BrowserError(RuntimeError):
 @dataclass(frozen=True)
 class BrowserConfig:
     display_name: str
-    application_name: str
     product_marker: str
     executable: Path
     user_data_dir: Path
     log_file: Path
+    platform_name: str
     debug_host: str = "127.0.0.1"
     debug_port: int = 9222
     startup_timeout_seconds: float = 20.0
-    shutdown_timeout_seconds: float = 15.0
 
     @property
     def cdp_http_url(self) -> str:
         return f"http://{self.debug_host}:{self.debug_port}"
 
 
+def default_automation_data_root(
+    platform_name: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    system = platform_name or platform.system()
+    environment = os.environ if environ is None else environ
+    if system == "Darwin":
+        return (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Huya Automation"
+        )
+    if system == "Windows":
+        local_app_data = environment.get("LOCALAPPDATA")
+        if not local_app_data:
+            local_app_data = str(Path.home() / "AppData" / "Local")
+        return Path(local_app_data) / "Huya Automation"
+    raise BrowserError(f"不支持的操作系统：{system}。目前仅支持 macOS 和 Windows。")
+
+
+def default_browser_executables(
+    platform_name: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
+    system = platform_name or platform.system()
+    environment = os.environ if environ is None else environ
+    if system == "Darwin":
+        return (
+            (
+                Path(
+                    "/Applications/Microsoft Edge.app/Contents/MacOS/"
+                    "Microsoft Edge"
+                ),
+            ),
+            (
+                Path(
+                    "/Applications/Google Chrome.app/Contents/MacOS/"
+                    "Google Chrome"
+                ),
+            ),
+        )
+    if system == "Windows":
+        program_files = environment.get("PROGRAMFILES")
+        program_files_x86 = environment.get("PROGRAMFILES(X86)")
+        program_files_64 = environment.get("PROGRAMW6432")
+        local_app_data = environment.get("LOCALAPPDATA")
+        edge_roots = (
+            program_files_x86,
+            program_files_64,
+            program_files,
+            local_app_data,
+        )
+        chrome_roots = (
+            program_files_64,
+            program_files,
+            program_files_x86,
+            local_app_data,
+        )
+        edge = tuple(
+            Path(root) / "Microsoft" / "Edge" / "Application" / "msedge.exe"
+            for root in edge_roots
+            if root
+        )
+        chrome = tuple(
+            Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe"
+            for root in chrome_roots
+            if root
+        )
+        return edge, chrome
+    raise BrowserError(f"不支持的操作系统：{system}。目前仅支持 macOS 和 Windows。")
+
+
+def first_installed(paths: Sequence[Path]) -> Path | None:
+    return next((path for path in paths if path.is_file()), None)
+
+
 def select_browser_config(
     *,
     debug_port: int = 9222,
-    edge_executable: Path = DEFAULT_EDGE_EXECUTABLE,
-    chrome_executable: Path = DEFAULT_CHROME_EXECUTABLE,
-    data_root: Path = DEFAULT_AUTOMATION_DATA_ROOT,
+    edge_executable: Path | None = None,
+    chrome_executable: Path | None = None,
+    data_root: Path | None = None,
+    platform_name: str | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> BrowserConfig:
+    system = platform_name or platform.system()
+    default_edge, default_chrome = default_browser_executables(
+        system,
+        environ,
+    )
+    edge_paths = (edge_executable,) if edge_executable else default_edge
+    chrome_paths = (chrome_executable,) if chrome_executable else default_chrome
+    root = data_root or default_automation_data_root(system, environ)
     candidates = (
-        BrowserConfig(
-            display_name="Microsoft Edge",
-            application_name="Microsoft Edge",
-            product_marker="Edg/",
-            executable=edge_executable,
-            user_data_dir=data_root / "Edge",
-            log_file=Path("edge-debug.log"),
-            debug_port=debug_port,
+        (
+            "Microsoft Edge",
+            "Edg/",
+            first_installed(edge_paths),
+            root / "Edge",
+            root / "edge-debug.log",
         ),
-        BrowserConfig(
-            display_name="Google Chrome",
-            application_name="Google Chrome",
-            product_marker="Chrome/",
-            executable=chrome_executable,
-            user_data_dir=data_root / "Chrome",
-            log_file=Path("chrome-debug.log"),
-            debug_port=debug_port,
+        (
+            "Google Chrome",
+            "Chrome/",
+            first_installed(chrome_paths),
+            root / "Chrome",
+            root / "chrome-debug.log",
         ),
     )
-    for config in candidates:
-        if config.executable.is_file():
-            return config
+    for display_name, marker, executable, profile, log_file in candidates:
+        if executable is not None:
+            return BrowserConfig(
+                display_name=display_name,
+                product_marker=marker,
+                executable=executable,
+                user_data_dir=profile,
+                log_file=log_file,
+                platform_name=system,
+                debug_port=debug_port,
+            )
     raise BrowserError(
         "未找到受支持的浏览器。请安装 Microsoft Edge 或 Google Chrome。"
     )
@@ -119,33 +201,52 @@ def is_cdp_ready(config: BrowserConfig) -> bool:
     )
 
 
+def read_process_commands(platform_name: str) -> list[str]:
+    if platform_name == "Darwin":
+        command = ["ps", "-ax", "-o", "command="]
+    elif platform_name == "Windows":
+        command = [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[Console]::OutputEncoding=[Text.Encoding]::UTF8; "
+            "Get-CimInstance Win32_Process | "
+            "ForEach-Object { $_.CommandLine }",
+        ]
+    else:
+        raise BrowserError(f"不支持的操作系统：{platform_name}")
+    try:
+        result = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise BrowserError(f"无法读取浏览器进程列表：{error}") from error
+    return result.stdout.splitlines()
+
+
+def process_commands_include_browser(
+    config: BrowserConfig,
+    commands: Sequence[str],
+) -> bool:
+    executable = str(config.executable).casefold()
+    profile_argument = f"--user-data-dir={config.user_data_dir}".casefold()
+    return any(
+        executable in command.casefold()
+        and profile_argument in command.casefold()
+        for command in commands
+    )
+
+
 def is_browser_running(config: BrowserConfig) -> bool:
     """Detect the selected browser process that owns this automation profile."""
-    result = subprocess.run(
-        ["ps", "-ax", "-o", "command="],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    executable = str(config.executable)
-    profile_argument = f"--user-data-dir={config.user_data_dir}"
-    return any(
-        line.strip().startswith(f"{executable} ") and profile_argument in line
-        for line in result.stdout.splitlines()
-    )
-
-
-def request_browser_quit(config: BrowserConfig) -> None:
-    """Ask the selected browser to quit normally."""
-    subprocess.run(
-        [
-            "osascript",
-            "-e",
-            f'tell application "{config.application_name}" to quit',
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
+    return process_commands_include_browser(
+        config,
+        read_process_commands(config.platform_name),
     )
 
 
@@ -163,19 +264,6 @@ async def wait_until(
     return predicate() is expected
 
 
-async def stop_regular_browser(config: BrowserConfig) -> None:
-    request_browser_quit(config)
-    stopped = await wait_until(
-        lambda: is_browser_running(config),
-        expected=False,
-        timeout_seconds=config.shutdown_timeout_seconds,
-    )
-    if not stopped:
-        raise BrowserError(
-            f"{config.display_name} 未能在规定时间内退出，请手动关闭后重新运行。"
-        )
-
-
 def launch_debug_browser(config: BrowserConfig) -> None:
     if not config.executable.is_file():
         raise BrowserError(f"未找到 {config.display_name}：{config.executable}")
@@ -186,21 +274,44 @@ def launch_debug_browser(config: BrowserConfig) -> None:
         config.user_data_dir,
     )
 
-    log_file = config.log_file.open("a", encoding="utf-8")
-    subprocess.Popen(
-        [
-            str(config.executable),
-            f"--remote-debugging-address={config.debug_host}",
-            f"--remote-debugging-port={config.debug_port}",
-            f"--user-data-dir={config.user_data_dir}",
-            "--no-first-run",
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    log_file.close()
+    process_options: dict[str, object]
+    if config.platform_name == "Windows":
+        process_options = {
+            "creationflags": (
+                getattr(subprocess, "DETACHED_PROCESS", 0)
+                | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            ),
+        }
+    else:
+        process_options = {"start_new_session": True}
+
+    try:
+        log_file = config.log_file.open("a", encoding="utf-8")
+    except OSError as error:
+        raise BrowserError(
+            f"无法打开浏览器日志文件 {config.log_file}：{error}"
+        ) from error
+    try:
+        try:
+            subprocess.Popen(
+                [
+                    str(config.executable),
+                    f"--remote-debugging-address={config.debug_host}",
+                    f"--remote-debugging-port={config.debug_port}",
+                    f"--user-data-dir={config.user_data_dir}",
+                    "--no-first-run",
+                ],
+                stdin=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                **process_options,
+            )
+        except OSError as error:
+            raise BrowserError(
+                f"无法启动 {config.display_name}：{error}"
+            ) from error
+    finally:
+        log_file.close()
 
 
 async def ensure_debug_browser(
