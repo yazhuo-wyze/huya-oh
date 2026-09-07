@@ -116,7 +116,11 @@ async def is_room_muted(page: Page) -> bool:
     )
 
 
-async def ensure_room_muted(page: Page, *, dry_run: bool = False) -> bool:
+async def ensure_room_muted(
+    page: Page,
+    *,
+    dry_run: bool = False,
+) -> bool | None:
     await wait_for_room(page)
     button = page.locator(SOUND_BUTTON_SELECTOR)
     try:
@@ -133,23 +137,33 @@ async def ensure_room_muted(page: Page, *, dry_run: bool = False) -> bool:
         logger.info("直播声音状态检查：有声音，dry-run 不点击")
         return True
 
-    logger.info("检测到直播声音，正在静音")
-    await button.evaluate("(element) => element.click()")
-    try:
-        await page.wait_for_function(
-            """([selector, offClass]) => {
-                const button = document.querySelector(selector);
-                const media = [...document.querySelectorAll('video, audio')];
-                return button?.classList.contains(offClass)
-                    || (media.length > 0
-                        && media.every((item) => item.muted || item.volume === 0));
-            }""",
-            arg=[SOUND_BUTTON_SELECTOR, SOUND_OFF_CLASS],
-            timeout=5_000,
-        )
-    except PlaywrightTimeoutError as error:
-        raise RoomError("已点击音量控件，但直播间仍然有声音。") from error
-    return True
+    for attempt in range(1, 3):
+        logger.info("检测到直播声音，正在静音（第 %d 次）", attempt)
+        await button.evaluate("(element) => element.click()")
+        try:
+            await page.wait_for_function(
+                """([selector, offClass]) => {
+                    const button = document.querySelector(selector);
+                    const media = [...document.querySelectorAll('video, audio')];
+                    return button?.classList.contains(offClass)
+                        || (media.length > 0
+                            && media.every(
+                                (item) => item.muted || item.volume === 0));
+                }""",
+                arg=[SOUND_BUTTON_SELECTOR, SOUND_OFF_CLASS],
+                timeout=5_000,
+            )
+            return True
+        except PlaywrightTimeoutError:
+            if attempt < 2:
+                logger.warning("静音状态尚未更新，等待后重试")
+                await page.wait_for_timeout(1_000)
+                button = page.locator(SOUND_BUTTON_SELECTOR)
+                if await is_room_muted(page):
+                    return True
+
+    logger.warning("无法确认直播间已静音，跳过该初始化项并继续运行")
+    return None
 
 
 async def is_player_danmu_disabled(page: Page) -> bool:
@@ -164,7 +178,7 @@ async def ensure_player_danmu_disabled(
     page: Page,
     *,
     dry_run: bool = False,
-) -> bool:
+) -> bool | None:
     await wait_for_room(page)
     button = page.locator(DANMU_BUTTON_SELECTOR)
     try:
@@ -181,18 +195,27 @@ async def ensure_player_danmu_disabled(
         logger.info("播放器弹幕状态检查：已开启，dry-run 不点击")
         return True
 
-    logger.info("检测到播放器弹幕，正在关闭")
-    await button.evaluate("(element) => element.click()")
-    try:
-        await page.wait_for_function(
-            """([selector, offClass]) => {
-                const button = document.querySelector(selector);
-                return button?.classList.contains(offClass)
-                    || button?.title === '开启弹幕';
-            }""",
-            arg=[DANMU_BUTTON_SELECTOR, DANMU_OFF_CLASS],
-            timeout=5_000,
-        )
-    except PlaywrightTimeoutError as error:
-        raise RoomError("已点击弹幕开关，但播放器弹幕仍然开启。") from error
-    return True
+    for attempt in range(1, 3):
+        logger.info("检测到播放器弹幕，正在关闭（第 %d 次）", attempt)
+        await button.evaluate("(element) => element.click()")
+        try:
+            await page.wait_for_function(
+                """([selector, offClass]) => {
+                    const button = document.querySelector(selector);
+                    return button?.classList.contains(offClass)
+                        || button?.title === '开启弹幕';
+                }""",
+                arg=[DANMU_BUTTON_SELECTOR, DANMU_OFF_CLASS],
+                timeout=5_000,
+            )
+            return True
+        except PlaywrightTimeoutError:
+            if attempt < 2:
+                logger.warning("弹幕状态尚未更新，等待后重试")
+                await page.wait_for_timeout(1_000)
+                button = page.locator(DANMU_BUTTON_SELECTOR)
+                if await is_player_danmu_disabled(page):
+                    return True
+
+    logger.warning("无法确认播放器弹幕已关闭，跳过该初始化项并继续运行")
+    return None

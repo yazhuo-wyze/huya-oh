@@ -21,6 +21,9 @@ class InstanceLockError(RuntimeError):
 def default_lock_file(
     platform_name: str | None = None,
     environ: Mapping[str, str] | None = None,
+    *,
+    account_id: str | None = None,
+    supervisor: bool = False,
 ) -> Path:
     system = platform_name or platform.system()
     environment = os.environ if environ is None else environ
@@ -40,7 +43,11 @@ def default_lock_file(
         raise InstanceLockError(
             f"不支持的操作系统：{system}。目前仅支持 macOS 和 Windows。"
         )
-    return root / "automation.lock"
+    if supervisor:
+        return root / "supervisor.lock"
+    if account_id is None:
+        return root / "automation.lock"
+    return root / "locks" / f"{account_id}.lock"
 
 
 def lock_file_handle(lock_file: TextIO) -> None:
@@ -55,10 +62,21 @@ def lock_file_handle(lock_file: TextIO) -> None:
         fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
 
-def acquire_instance_lock(lock_path: Path | None = None) -> TextIO:
-    path = lock_path or default_lock_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock_file = path.open("a+", encoding="utf-8")
+def acquire_instance_lock(
+    lock_path: Path | None = None,
+    *,
+    account_id: str | None = None,
+    supervisor: bool = False,
+) -> TextIO:
+    path = lock_path or default_lock_file(
+        account_id=account_id,
+        supervisor=supervisor,
+    )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = path.open("a+", encoding="utf-8")
+    except OSError as error:
+        raise InstanceLockError(f"无法创建进程锁文件 {path}：{error}") from error
     try:
         lock_file_handle(lock_file)
     except (BlockingIOError, OSError) as error:

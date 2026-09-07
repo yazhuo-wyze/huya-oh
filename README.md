@@ -15,9 +15,10 @@
 ## 功能
 
 - 优先使用 Microsoft Edge，未安装 Edge 时自动回退到 Google Chrome。
+- 支持多个虎牙账号使用独立浏览器实例并行运行。
 - 使用独立的自动化 Profile，不读取或修改日常浏览器数据。
 - 复用已打开的目标直播间标签页，不存在时才新建标签页。
-- 检测登录状态，支持从 `.env` 读取账号密码或在终端安全输入。
+- 检测登录状态，从本地 `config.toml` 读取账号密码。
 - 自动静音直播间、关闭播放器弹幕并进入剧场模式。
 - 每 5–10 秒随机检查一次“欧皇时刻”活动。
 - 仅通过“免费抽 / 看视频免费参与”累计幸运值。
@@ -34,7 +35,7 @@
 - 免费参与按钮必须严格匹配“看视频免费参与”。
 - 广告、奖励和活动状态无法确认时停止当前流程，不进行盲目点击。
 - `dry-run` 模式只检测和记录状态，不执行登录、播放器或活动点击。
-- `.env`、浏览器 Profile 和运行日志均不会提交到 Git。
+- `config.toml`、浏览器 Profile 和运行日志均不会提交到 Git。
 - 程序不会复制、修改或关闭日常 Edge、Chrome 的用户数据。
 
 ## 环境要求
@@ -76,33 +77,42 @@ py -3 -m venv .venv
 后续示例默认已经激活虚拟环境。安装完成后可执行
 `huya-open-room --help` 查看命令说明。
 
-## 登录配置
+## 账号配置
 
-推荐复制环境变量模板：
+复制账号配置模板：
 
 macOS：
 
 ```bash
-cp .env.example .env
+cp config.example.toml config.toml
 ```
 
 Windows PowerShell：
 
 ```powershell
-Copy-Item .env.example .env
+Copy-Item config.example.toml config.toml
 ```
 
-然后编辑 `.env`：
+每个账号只需要填写虎牙用户名；`username` 同时作为账号 ID：
 
-```dotenv
-HUYA_USERNAME=你的账号
-HUYA_PASSWORD=你的密码
+```toml
+[[accounts]]
+enabled = true
+username = "账号A"
+password = "密码A"
+
+[[accounts]]
+enabled = true
+username = "账号B"
+password = "密码B"
 ```
 
-`.env` 已被 Git 忽略。程序不会在日志中输出账号或密码。
+`config.toml` 已被 Git 忽略，程序不会在日志中输出密码；`username` 会作为
+账号 ID 出现在日志中。请限制该文件只对当前用户可读，不要复制到公共位置。
+不同账号必须使用不同的 `username`。CDP 端口由程序启动时自动选择，无需配置。
 
-如果未配置 `.env` 且直播间尚未登录，程序会在终端询问账号并隐藏密码输入。
-如果虎牙要求验证码，自动登录会停止，并保留浏览器供人工处理。
+`username` 和 `password` 可以同时省略，以复用对应浏览器 Profile 中已有的
+登录状态。如果虎牙要求验证码，自动登录会停止，并保留浏览器供人工处理。
 
 ## 运行
 
@@ -112,7 +122,8 @@ HUYA_PASSWORD=你的密码
 huya-open-room
 ```
 
-程序会保持运行并持续检测活动，按 `Ctrl+C` 停止。
+默认并行运行 `config.toml` 中所有 `enabled=true` 的账号，并持续检测活动。
+按 `Ctrl+C` 停止全部账号工作进程。
 
 ### 仅初始化直播间
 
@@ -131,14 +142,34 @@ huya-open-room --dry-run
 该模式仍会启动或连接自动化浏览器并打开直播间，但不会提交登录信息、切换
 播放器状态或参与活动。
 
-### 使用其他 CDP 端口
+### 运行一个配置账号
 
 ```bash
-huya-open-room --debug-port 9333
+huya-open-room --account "账号A"
 ```
 
-默认端口为 `9222`。如果端口已被其他浏览器占用，程序会拒绝误连接并提示
-关闭对应浏览器或指定其他端口。
+该账号使用独立浏览器 Profile 和程序自动分配的 CDP 端口。即使
+`enabled=false`，仍可通过该命令单独启动，便于调试或人工登录。
+
+### 并行运行全部账号
+
+```bash
+huya-open-room --all-accounts
+```
+
+该参数与直接运行 `huya-open-room` 等价，用于显式表达运行全部账号。程序会
+为每个 `enabled=true` 的账号启动独立工作进程和浏览器实例。按 `Ctrl+C`
+会停止所有账号工作进程，但已启动的浏览器窗口仍会保留。
+
+如果不希望在 `config.toml` 保存密码，可以省略对应账号的 `username` 和
+`password`，再用以下命令打开所有独立 Profile：
+
+```bash
+huya-open-room --all-accounts --no-monitor
+```
+
+在每个浏览器窗口中人工完成对应账号登录后，再启动正式监控。未配置该账号
+凭据且对应 Profile 尚未登录时，该账号会输出错误并退出，不会影响其他账号。
 
 ## 浏览器数据
 
@@ -156,6 +187,17 @@ Windows：
 ```text
 %LOCALAPPDATA%\Huya Automation\Edge
 %LOCALAPPDATA%\Huya Automation\Chrome
+```
+
+多账号模式在上述目录下增加账号隔离层。为兼容邮箱、手机号和 Windows 文件
+系统，目录名是根据 `username` 生成的稳定哈希，而不是明文用户名：
+
+```text
+# macOS
+~/Library/Application Support/Huya Automation/Accounts/account-<hash>/Edge
+
+# Windows
+%LOCALAPPDATA%\Huya Automation\Accounts\account-<hash>\Edge
 ```
 
 首次切换到另一种浏览器时，需要在对应 Profile 中重新登录虎牙。之后运行会
@@ -189,15 +231,14 @@ Windows：
 日志格式为：
 
 ```text
-时间 | 级别 | 模块 | 消息
+时间 | 级别 | 账号 ID | 模块 | 消息
 ```
 
 示例：
 
 ```text
-2026-09-07 10:14:28 | INFO | huya_automation.main | 已选择 Microsoft Edge
-2026-09-07 10:14:51 | INFO | huya_automation.room | 找到已打开的目标直播间标签页
-2026-09-07 10:15:05 | INFO | huya_automation.lucky_event | 活动巡检：入口状态=08:35
+2026-09-07 10:14:28 | INFO | 账号A | huya_automation.main | 已选择 Microsoft Edge
+2026-09-07 10:14:51 | INFO | 账号B | huya_automation.room | 找到已打开的目标直播间标签页
 ```
 
 浏览器调试输出保存在系统的 `Huya Automation` 应用数据目录中，文件名为
@@ -212,12 +253,13 @@ Windows：
 
 ### 提示 CDP 端口被其他浏览器占用
 
-关闭占用该端口的自动化浏览器，或通过 `--debug-port` 指定新端口。
+关闭提示中对应的自动化浏览器后重新运行。新浏览器的 CDP 端口由程序自动
+选择；已运行的账号浏览器会自动发现并复用原端口。
 
 ### 程序提示已有实例运行
 
-同一时间只允许一个 `huya-open-room` 进程运行。先在原终端按 `Ctrl+C` 停止，
-再重新启动。
+同一账号不能重复启动，不同账号可以并行运行；全部账号模式的监督进程也有
+独立锁，避免重复启动两组工作进程。
 
 ### 登录时出现验证码
 
@@ -241,6 +283,7 @@ python -m unittest discover -s tests -v
 
 ```text
 src/huya_automation/
+├── accounts.py       # 多账号配置读取与校验
 ├── auth.py           # 登录状态与账号密码登录
 ├── browser.py        # Edge/Chrome 检测、启动和 CDP 连接
 ├── instance_lock.py  # 单实例文件锁

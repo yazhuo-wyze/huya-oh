@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import getpass
 import logging
-import os
 import time
 from dataclasses import dataclass
 
-from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
+from playwright.async_api import (
+    Locator,
+    Page,
+    TimeoutError as PlaywrightTimeoutError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,25 +31,13 @@ class Credentials:
     username: str
     password: str
 
-    @classmethod
-    def from_environment(cls) -> Credentials | None:
-        username = os.environ.get("HUYA_USERNAME", "").strip()
-        password = os.environ.get("HUYA_PASSWORD", "")
-        if not username and not password:
-            return None
-        if not username or not password:
-            raise LoginError(
-                "HUYA_USERNAME 和 HUYA_PASSWORD 必须同时设置。"
-            )
-        return cls(username=username, password=password)
 
-    @classmethod
-    def prompt(cls) -> Credentials:
-        username = input("虎牙账号：").strip()
-        password = getpass.getpass("虎牙密码：")
-        if not username or not password:
-            raise LoginError("账号和密码不能为空。")
-        return cls(username=username, password=password)
+async def any_locator_visible(locator: Locator) -> bool:
+    """Check all matching elements without triggering Playwright strict mode."""
+    for index in range(await locator.count()):
+        if await locator.nth(index).is_visible():
+            return True
+    return False
 
 
 async def is_logged_in(page: Page) -> bool:
@@ -76,7 +66,7 @@ async def wait_for_login_result(page: Page, timeout_seconds: float = 20.0) -> No
         if await is_logged_in(page):
             logger.info("虎牙登录状态验证成功")
             return
-        if await captcha.is_visible():
+        if await any_locator_visible(captcha):
             logger.warning("登录流程出现验证码，需要人工处理")
             raise LoginError(
                 "登录需要验证码。登录框已保留，请人工完成验证后重新运行。"
@@ -104,7 +94,7 @@ async def ensure_logged_in(
         return True
     if credentials is None:
         raise LoginError(
-            "当前未登录。请设置 HUYA_USERNAME、HUYA_PASSWORD 后重新运行，"
+            "当前未登录。请在 config.toml 中配置 username 和 password，"
             "或直接在自动化浏览器中手动登录。"
         )
 

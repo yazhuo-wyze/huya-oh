@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from huya_automation.accounts import AccountConfig
 from huya_automation.instance_lock import (
     InstanceLockError,
     acquire_instance_lock,
@@ -30,6 +31,30 @@ class InstanceLockPathTest(unittest.TestCase):
             / "Huya Automation"
             / "automation.lock",
         )
+
+    def test_account_lock_path(self) -> None:
+        account = AccountConfig("user@example.com")
+
+        self.assertEqual(
+            default_lock_file(
+                "Darwin",
+                {},
+                account_id=account.storage_id,
+            ).parts[-2:],
+            ("locks", f"{account.storage_id}.lock"),
+        )
+
+    def test_supervisor_lock_does_not_collide_with_account(self) -> None:
+        supervisor = default_lock_file("Darwin", {}, supervisor=True)
+        account = default_lock_file(
+            "Darwin",
+            {},
+            account_id="supervisor",
+        )
+
+        self.assertEqual(supervisor.name, "supervisor.lock")
+        self.assertEqual(account.parts[-2:], ("locks", "supervisor.lock"))
+        self.assertNotEqual(supervisor, account)
 
 
 class InstanceLockBehaviorTest(unittest.TestCase):

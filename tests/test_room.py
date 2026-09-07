@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
 from huya_automation.room import (
     TARGET_ROOM_URL,
     ensure_player_danmu_disabled,
@@ -94,6 +96,21 @@ class RoomMuteTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(changed)
         button.evaluate.assert_not_awaited()
 
+    async def test_continues_when_muted_state_cannot_be_confirmed(
+        self,
+    ) -> None:
+        page, button = self.build_page("player-sound-on", False)
+        page.wait_for_function = AsyncMock(
+            side_effect=PlaywrightTimeoutError("not updated")
+        )
+        page.wait_for_timeout = AsyncMock()
+
+        changed = await ensure_room_muted(page)
+
+        self.assertIsNone(changed)
+        self.assertEqual(button.evaluate.await_count, 2)
+        page.wait_for_timeout.assert_awaited_once_with(1_000)
+
 
 class PlayerDanmuTest(unittest.IsolatedAsyncioTestCase):
     @staticmethod
@@ -135,6 +152,24 @@ class PlayerDanmuTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(changed)
         button.evaluate.assert_not_awaited()
+
+    async def test_continues_when_disabled_state_cannot_be_confirmed(
+        self,
+    ) -> None:
+        page, button = self.build_page(
+            "player-ctrl-switch player-ctrl-switch-show",
+            "关闭弹幕",
+        )
+        page.wait_for_function = AsyncMock(
+            side_effect=PlaywrightTimeoutError("not updated")
+        )
+        page.wait_for_timeout = AsyncMock()
+
+        changed = await ensure_player_danmu_disabled(page)
+
+        self.assertIsNone(changed)
+        self.assertEqual(button.evaluate.await_count, 2)
+        page.wait_for_timeout.assert_awaited_once_with(1_000)
 
 
 if __name__ == "__main__":

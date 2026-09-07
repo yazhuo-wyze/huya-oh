@@ -1,0 +1,11 @@
+# Copy this file to config.toml. The local file is ignored by Git.
+# Each enabled account runs in an isolated browser Profile and random CDP port.
+[[accounts]]
+enabled = true
+username = "your_first_username"
+password = "your_first_password"
+
+[[accounts]]
+enabled = true
+username = "your_second_username"
+password = "your_second_password"

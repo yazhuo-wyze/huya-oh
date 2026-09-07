@@ -1,31 +1,22 @@
-import os
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-from huya_automation.auth import Credentials, LoginError, ensure_logged_in
+from huya_automation.auth import any_locator_visible, ensure_logged_in
 
 
-class CredentialsTest(unittest.TestCase):
-    @patch.dict(os.environ, {}, clear=True)
-    def test_returns_none_without_environment_variables(self) -> None:
-        self.assertIsNone(Credentials.from_environment())
+class LocatorVisibilityTest(unittest.IsolatedAsyncioTestCase):
+    async def test_checks_each_match_without_strict_mode(self) -> None:
+        hidden = MagicMock()
+        hidden.is_visible = AsyncMock(return_value=False)
+        visible = MagicMock()
+        visible.is_visible = AsyncMock(return_value=True)
+        locator = MagicMock()
+        locator.count = AsyncMock(return_value=3)
+        locator.nth.side_effect = [hidden, visible, hidden]
 
-    @patch.dict(os.environ, {"HUYA_USERNAME": "user"}, clear=True)
-    def test_rejects_partial_credentials(self) -> None:
-        with self.assertRaises(LoginError):
-            Credentials.from_environment()
-
-    @patch("huya_automation.auth.getpass.getpass", return_value="secret")
-    @patch("builtins.input", return_value="user")
-    def test_prompts_without_exposing_password(
-        self,
-        _input: unittest.mock.Mock,
-        _getpass: unittest.mock.Mock,
-    ) -> None:
-        credentials = Credentials.prompt()
-
-        self.assertEqual(credentials.username, "user")
-        self.assertEqual(credentials.password, "secret")
+        self.assertTrue(await any_locator_visible(locator))
+        locator.nth.assert_any_call(0)
+        locator.nth.assert_any_call(1)
 
 
 class LoginStateTest(unittest.IsolatedAsyncioTestCase):

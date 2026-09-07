@@ -9,7 +9,6 @@ description = "Local Edge or Chrome automation for a Huya live room"
 requires-python = ">=3.11"
 dependencies = [
     "playwright>=1.52,<2",
-    "python-dotenv>=1.1,<2",
 ]
 
 [project.scripts]

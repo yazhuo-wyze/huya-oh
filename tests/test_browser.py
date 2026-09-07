@@ -1,13 +1,18 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from huya_automation.browser import (
     BrowserError,
     cdp_browser_matches,
     default_automation_data_root,
     default_browser_executables,
+    find_existing_browser_debug_port,
     process_commands_include_browser,
+    process_commands_include_profile,
+    read_active_debug_port,
+    resolve_debug_browser_config,
     select_browser_config,
 )
 
@@ -58,6 +63,24 @@ class BrowserSelectionTest(unittest.TestCase):
                 config.log_file,
                 root / "profiles" / "chrome-debug.log",
             )
+
+    def test_account_uses_isolated_profile_and_log(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            edge = root / "edge"
+            edge.touch()
+
+            config = select_browser_config(
+                edge_executable=edge,
+                chrome_executable=root / "missing-chrome",
+                data_root=root / "profiles",
+                account_id="account-a",
+                platform_name="Darwin",
+            )
+
+            account_root = root / "profiles" / "Accounts" / "account-a"
+            self.assertEqual(config.user_data_dir, account_root / "Edge")
+            self.assertEqual(config.log_file, account_root / "edge-debug.log")
 
     def test_fails_when_no_supported_browser_is_installed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -118,7 +141,8 @@ class BrowserProcessTest(unittest.TestCase):
             )
             command = (
                 f'"{str(edge).upper()}" '
-                f'"--user-data-dir={str(config.user_data_dir).upper()}"'
+                f'"--user-data-dir={str(config.user_data_dir).upper()}" '
+                f"--remote-debugging-port={config.debug_port}"
             )
 
             self.assertTrue(
@@ -127,6 +151,111 @@ class BrowserProcessTest(unittest.TestCase):
             self.assertFalse(
                 process_commands_include_browser(config, ["other.exe"])
             )
+
+    def test_detects_same_profile_on_another_port(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            edge = root / "msedge.exe"
+            edge.touch()
+            config = select_browser_config(
+                edge_executable=edge,
+                chrome_executable=root / "missing-chrome",
+                data_root=root / "profiles",
+                account_id="account-a",
+                platform_name="Windows",
+            )
+            command = (
+                f'"{edge}" "--user-data-dir={config.user_data_dir}" '
+                "--remote-debugging-port=9333"
+            )
+
+            self.assertFalse(
+                process_commands_include_browser(config, [command])
+            )
+            self.assertTrue(
+                process_commands_include_profile(config, [command])
+            )
+
+    def test_does_not_match_port_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            edge = root / "edge"
+            edge.touch()
+            config = select_browser_config(
+                edge_executable=edge,
+                chrome_executable=root / "missing-chrome",
+                data_root=root / "profiles",
+                account_id="account-a",
+                platform_name="Darwin",
+                debug_port=9222,
+            )
+            command = (
+                f"{edge} --user-data-dir={config.user_data_dir} "
+                "--remote-debugging-port=92220 --no-first-run"
+            )
+
+            self.assertFalse(
+                process_commands_include_browser(config, [command])
+            )
+
+    def test_reuses_existing_profile_debug_port(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            edge = root / "edge"
+            edge.touch()
+            config = select_browser_config(
+                edge_executable=edge,
+                chrome_executable=root / "missing-chrome",
+                data_root=root / "profiles",
+                account_id="account-hash",
+                platform_name="Darwin",
+                debug_port=45000,
+            )
+            command = (
+                f"{edge} --remote-debugging-port=9333 "
+                f"--user-data-dir={config.user_data_dir} --no-first-run"
+            )
+
+            with patch(
+                "huya_automation.browser.read_process_commands",
+                return_value=[command],
+            ):
+                existing_port = find_existing_browser_debug_port(config)
+                resolved = resolve_debug_browser_config(config)
+
+            self.assertEqual(existing_port, 9333)
+            self.assertEqual(resolved.debug_port, 9333)
+
+    def test_reads_browser_assigned_random_debug_port(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            edge = root / "edge"
+            edge.touch()
+            config = select_browser_config(
+                edge_executable=edge,
+                chrome_executable=root / "missing-chrome",
+                data_root=root / "profiles",
+                account_id="account-hash",
+                platform_name="Darwin",
+                debug_port=0,
+            )
+            config.user_data_dir.mkdir(parents=True)
+            (config.user_data_dir / "DevToolsActivePort").write_text(
+                "54321\n/devtools/browser/test\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(read_active_debug_port(config), 54321)
+            with patch(
+                "huya_automation.browser.read_process_commands",
+                return_value=[
+                    f"{edge} --remote-debugging-port=0 "
+                    f"--user-data-dir={config.user_data_dir} --no-first-run"
+                ],
+            ):
+                resolved = resolve_debug_browser_config(config)
+
+            self.assertEqual(resolved.debug_port, 54321)
 
 
 class CdpBrowserIdentityTest(unittest.TestCase):
